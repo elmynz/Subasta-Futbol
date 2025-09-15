@@ -1,0 +1,2692 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subasta de Fútbol</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        /* Desktop layout helpers to keep the card centered and show auction on the left */
+        @media (min-width: 1024px) {
+            #game-container { position: relative; z-index: 10; }
+        }
+        :root {
+            --card-bg: #0f172a; /* slate-900 */
+            --card-bg-2: #111827; /* gray-900 */
+            --card-border: rgba(255, 255, 255, 0.08);
+            --card-highlight: rgba(16, 185, 129, 0.25);
+            --card-shadow: 0 20px 60px -15px rgba(0,0,0,0.6);
+            --accent: #10b981; /* emerald-500 */
+            --accent-2: #34d399; /* emerald-400 */
+        }
+        .player-image {
+            width: 300px;
+            height: 300px;
+            object-fit: contain;
+            margin: 0 auto;
+            display: block;
+        }
+        .clue-image {
+            width: 300px;
+            height: 300px;
+            object-fit: contain;
+            margin: 0 auto;
+            display: block;
+            filter: brightness(0.3);
+        }
+    </style>
+    <script>
+        // Función para obtener un precio falso (entre -15% y +25% del precio real)
+        function getFakePrice(price) {
+            // Generar un porcentaje aleatorio entre -15% y +25%
+            const percentage = (Math.random() * 0.4) - 0.15; // -0.15 a +0.25
+            // Aplicar el porcentaje al precio y redondear al entero más cercano
+            return Math.round(price * (1 + percentage));
+        }
+
+        // Los datos de los jugadores de fútbol, clasificados por nivel
+        let playersByPosition = {
+            'Portero': {
+                'PRIME': [
+                { "name": "Lev Yashin PRIME", "price": 130, "photo": "fotos/1.png" },
+                { "name": "Gianluigi Buffon PRIME", "price": 120, "photo": "fotos/2.png" },
+                { "name": "Iker Casillas PRIME", "price": 120, "photo": "fotos/3.png" },
+                { "name": "Manuel Neuer PRIME", "price": 120, "photo": "fotos/4.png" },
+                { "name": "Víctor Valdés PRIME", "price": 110, "photo": "fotos/5.png" },
+                { "name": "Claudio Bravo PRIME", "price": 110, "photo": "fotos/6.png" },
+                { "name": "Peter Schmeichel PRIME", "price": 100, "photo": "fotos/7.png" },
+                { "name": "Oliver Kahn PRIME", "price": 130, "photo": "fotos/8.png" },
+                { "name": "Edwin van der Sar PRIME", "price": 110, "photo": "fotos/9.png" },
+                { "name": "Petr Cech PRIME", "price": 105, "photo": "fotos/10.png" }
+                ],
+                'Muy Bueno': [
+                { "name": "Gianluigi Donnarumma", "price": 85, "photo": "fotos/11.png" },
+                { "name": "Thibaut Courtois", "price": 84, "photo": "fotos/12.png" },
+                { "name": "Alisson Becker", "price": 83, "photo": "fotos/13.png" },
+                { "name": "Emiliano Martínez", "price": 82, "photo": "fotos/14.png" },
+                { "name": "Mike Maignan", "price": 81, "photo": "fotos/15.png" },
+                { "name": "David Raya", "price": 80, "photo": "fotos/16.png" },
+                { "name": "Jan Oblak", "price": 79, "photo": "fotos/17.png" },
+                { "name": "Yann Sommer", "price": 78, "photo": "fotos/18.png" },
+                { "name": "Marc-André ter Stegen", "price": 77, "photo": "fotos/19.png" },
+                { "name": "Gregor Kobel", "price": 76, "photo": "fotos/20.png" }
+                ],
+                'Bueno': [
+                { "name": "Diogo Costa", "price": 65, "photo": "fotos/21.png" },
+                { "name": "Giorgi Mamardashvili", "price": 64, "photo": "fotos/22.png" },
+                { "name": "Unai Simón", "price": 63, "photo": "fotos/23.png" },
+                { "name": "Jordan Pickford", "price": 62, "photo": "fotos/24.png" },
+                { "name": "Vanja Milinković-Savić", "price": 61, "photo": "fotos/25.png" },
+                { "name": "Guglielmo Vicario", "price": 60, "photo": "fotos/26.png" },
+                { "name": "Michele Di Gregorio", "price": 59, "photo": "fotos/27.png" },
+                { "name": "Matz Sels", "price": 58, "photo": "fotos/28.png" },
+                { "name": "Wojciech Szczęsny", "price": 57, "photo": "fotos/29.png" },
+                { "name": "André Onana", "price": 56, "photo": "fotos/30.png" }
+                ],
+                'Normal': [
+                { "name": "Nick Pope", "price": 45, "photo": "fotos/31.png" },
+                { "name": "Anatoliy Trubin", "price": 44, "photo": "fotos/32.png" },
+                { "name": "Koen Casteels", "price": 43, "photo": "fotos/33.png" },
+                { "name": "Dominik Livaković", "price": 42, "photo": "fotos/34.png" },
+                { "name": "Álex Remiro", "price": 41, "photo": "fotos/35.png" },
+                { "name": "Luis Maximiano", "price": 40, "photo": "fotos/36.png" },
+                { "name": "Iñaki Peña", "price": 39, "photo": "fotos/37.png" },
+                { "name": "Andriy Lunin", "price": 38, "photo": "fotos/38.png" },
+                { "name": "Sam Johnstone", "price": 37, "photo": "fotos/39.png" },
+                { "name": "Alphonse Areola", "price": 36, "photo": "fotos/40.png" }
+                ],
+                'Malo': [
+                { "name": "Guillermo Ochoa", "price": 25, "photo": "fotos/41.png" },
+                { "name": "Johnny Herrera", "price": 85, "photo": "fotos/42.png" },
+                { "name": "Pablo Escamilla", "price": 80, "photo": "fotos/43.png" },
+                { "name": "Bernd Leno", "price": 22, "photo": "fotos/44.png" },
+                { "name": "José Sá", "price": 21, "photo": "fotos/45.png" },
+                { "name": "Stefan Ortega", "price": 20, "photo": "fotos/46.png" },
+                ]
+            },
+            'Lateral Derecho': {
+                'PRIME': [
+                { "name": "Cafu PRIME", "price": 105, "photo": "fotos/100.png" },
+                { "name": "Dani Alves PRIME", "price": 103, "photo": "fotos/101.png" },
+                { "name": "Philipp Lahm PRIME", "price": 102, "photo": "fotos/102.png" },
+                { "name": "Javier Zanetti PRIME", "price": 100, "photo": "fotos/103.png" },
+                { "name": "Lilian Thuram PRIME", "price": 99, "photo": "fotos/104.png" },
+                { "name": "Maicon PRIME", "price": 98, "photo": "fotos/105.png" }
+                ],
+                'Muy Bueno': [
+                { "name": "Trent Alexander-Arnold", "price": 85, "photo": "fotos/120.png" },
+                { "name": "Jules Kounde", "price": 84, "photo": "fotos/121.png" },
+                { "name": "Achraf Hakimi", "price": 83, "photo": "fotos/122.png" },
+                { "name": "Reece James", "price": 82, "photo": "fotos/123.png" },
+                { "name": "Jeremie Frimpong", "price": 81, "photo": "fotos/124.png" },
+                { "name": "João Cancelo", "price": 80, "photo": "fotos/125.png" }
+                ],
+                'Bueno': [
+                { "name": "Daniel Carvajal", "price": 40, "photo": "fotos/140.png" },
+                { "name": "Kyle Walker", "price": 45, "photo": "fotos/141.png" },
+                { "name": "Pedro Porro", "price": 60, "photo": "fotos/142.png" },
+                { "name": "Ben White", "price": 55, "photo": "fotos/143.png" },
+                { "name": "Malo Gusto", "price": 50, "photo": "fotos/144.png" },
+                { "name": "Denzel Dumfries", "price": 48, "photo": "fotos/145.png" },
+                ],
+                'Normal': [
+                { "name": "Diogo Dalot", "price": 30, "photo": "fotos/160.png" },
+                { "name": "Noussair Mazraoui", "price": 25, "photo": "fotos/161.png" },
+                { "name": "Matty Cash", "price": 25, "photo": "fotos/162.png" },
+                { "name": "Lutsharel Geertruida", "price": 20, "photo": "fotos/163.png" },
+                { "name": "Josip Stanišić", "price": 32, "photo": "fotos/164.png" },
+                { "name": "Takehiro Tomiyasu", "price": 28, "photo": "fotos/165.png" },
+                ],
+                'Malo': [
+                { "name": "Mauricio Isla", "price": 5, "photo": "fotos/180.png" },
+                { "name": "Sergi Roberto", "price": 7, "photo": "fotos/181.png" },
+                { "name": "Eugenio Mena", "price": 8, "photo": "fotos/182.png" },
+                { "name": "Osvaldo González", "price": 7, "photo": "fotos/183.png" },
+                { "name": "Luis Advíncula", "price": 10, "photo": "fotos/184.png" },
+                { "name": "Benjamin Castañeda", "price": 60, "photo": "fotos/185.png" },
+            ]
+            },
+            'Central Derecho': {
+                'PRIME': [
+                    { name: 'Franz Beckenbauer PRIME', price: 120, photo: 'fotos/200.png' },
+                    { name: 'Paolo Maldini PRIME', price: 115, photo: 'fotos/201.png' },
+                    { name: 'Fabio Cannavaro PRIME', price: 105, photo: 'fotos/202.png' },
+                    { name: 'Sergio Ramos PRIME', price: 100, photo: 'fotos/203.png' },
+                    { name: 'Elias Figueroa PRIME', price: 95, photo: 'fotos/204.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Ronald Araújo', price: 90, photo: 'fotos/220.png' },
+                    { name: 'Rúben Dias', price: 99, photo: 'fotos/221.png' },
+                    { name: 'William Saliba', price: 95, photo: 'fotos/222.png' },
+                    { name: 'Joško Gvardiol', price: 90, photo: 'fotos/223.png' },
+                    { name: 'Éder Militão', price: 88, photo: 'fotos/224.png' },
+                    { name: 'Matthijs de Ligt', price: 86, photo: 'fotos/225.png' }
+                ],
+                'Bueno': [
+                    { name: 'Jules Koundé', price: 70, photo: 'fotos/240.png' },
+                    { name: 'Dayot Upamecano', price: 65, photo: 'fotos/241.png' },
+                    { name: 'Fikayo Tomori', price: 59, photo: 'fotos/242.png' },
+                    { name: 'Alessandro Bastoni', price: 76, photo: 'fotos/243.png' },
+                    { name: 'Kim Min-jae', price: 63, photo: 'fotos/244.png' },
+                    { name: 'Cristian Romero', price: 59, photo: 'fotos/245.png' }
+                ],
+                'Normal': [
+                    { name: 'John Stones', price: 38, photo: 'fotos/260.png' },
+                    { name: 'Marquinhos', price: 43, photo: 'fotos/261.png' },
+                    { name: 'Raphaël Varane', price: 32, photo: 'fotos/262.png' },
+                    { name: 'Antonio Rüdiger', price: 32, photo: 'fotos/263.png' },
+                    { name: 'Aymeric Laporte', price: 27, photo: 'fotos/264.png' },
+                    { name: 'Ben White', price: 27, photo: 'fotos/265.png' }
+                ],
+                'Malo': [
+                    { name: 'Phil Jones', price: 5, photo: 'fotos/280.png' },
+                    { name: 'Shkodran Mustafi', price: 6, photo: 'fotos/281.png' },
+                    { name: 'Eric García', price: 12, photo: 'fotos/282.png' },
+                    { name: 'Harry Maguire', price: 14, photo: 'fotos/283.png' },
+                    { name: 'Clément Lenglet', price: 10, photo: 'fotos/284.png' },
+                    { name: 'Samuel Umtiti', price: 8, photo: 'fotos/285.png' }
+                ]
+            },
+            'Central Izquierdo': {
+                'PRIME': [
+                { name: 'Lisandro Martínez', price: 81, photo: 'fotos/320.png' },
+                    { name: 'Willam Pacho', price: 63, photo: 'fotos/321.png' },
+                    { name: 'Van dijk', price: 68, photo: 'fotos/322.png' },
+                    { name: 'Gabriel Magalhães', price: 59, photo: 'fotos/323.png' },
+                    { name: 'Dean Huijsen', price: 72, photo: 'fotos/324.png' },
+                    { name: 'Jonathan Tah', price: 36, photo: 'fotos/325.png' }
+                ],
+                'Bueno':[ 
+                    { name: 'Pau Torres', price: 25, photo: 'fotos/340.png' },
+                    { name: 'Edmond Tapsoba', price: 32, photo: 'fotos/341.png' },
+                    { name: 'Benoît Badiashile', price: 29, photo: 'fotos/342.png' },
+                    { name: 'van de ven', price: 36, photo: 'fotos/343.png' },
+                    { name: 'Sven Botman', price: 37, photo: 'fotos/344.png' },
+                    { name: 'Iñigo Martínez', price: 34, photo: 'fotos/345.png' }
+                ],
+
+                'Malo': [
+                    { name: 'Burn', price: 5, photo: 'fotos/380.png' },
+                    { name: 'Cristhian Mosquera', price: 6, photo: 'fotos/381.png' },
+                    { name: 'Victor Lindelöf', price: 12, photo: 'fotos/382.png' },
+                    { name: 'Enzo Boyomo', price: 10, photo: 'fotos/383.png' },
+                    { name: 'Dani Vivian', price: 8, photo: 'fotos/384.png' },
+                    { name: 'Nahuel Tenaglia', price: 9, photo: 'fotos/385.png'}
+                ],
+                'Normal': [
+                    { name: 'leny yoro', price: 12, photo: 'fotos/360.png' },
+                    { name: 'ake', price: 16, photo: 'fotos/361.png' },
+                    { name: 'Andreas Christensen', price: 10, photo: 'fotos/362.png' },
+                    { name: 'Robin Le Normand', price: 20, photo: 'fotos/363.png' },
+                    { name: 'Niklas Süle', price: 8, photo: 'fotos/364.png' },
+                    { name: 'Marc Bartra', price: 6, photo: 'fotos/365.png' } 
+                ],
+                'Malo': [
+                    { name: 'Burn', price: 5, photo: 'fotos/380.png' },
+                    { name: 'Cristhian Mosquera', price: 6, photo: 'fotos/381.png' },
+                    { name: 'Victor Lindelöf', price: 12, photo: 'fotos/382.png' },
+                    { name: 'Enzo Boyomo', price: 10, photo: 'fotos/383.png' },
+                    { name: 'Dani Vivian', price: 8, photo: 'fotos/384.png' },
+                    { name: 'Nahuel Tenaglia', price: 9, photo: 'fotos/385.png'}
+                ]
+            },
+            'Lateral Izquierdo': {
+                'PRIME': [
+                    { name: 'Roberto Carlos PRIME', price: 140, photo: 'fotos/400.png' },
+                    { name: 'Paolo Maldini PRIME', price: 135, photo: 'fotos/401.png' },
+                    { name: 'Ashley Cole PRIME', price: 95, photo: 'fotos/402.png' },
+                    { name: 'Marcelo PRIME', price: 100, photo: 'fotos/403.png' },
+                    { name: 'Jordi Alba PRIME', price: 90, photo: 'fotos/404.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Alphonso Davies', price: 99, photo: 'fotos/420.png' },
+                    { name: 'Theo Hernández', price: 95, photo: 'fotos/421.png' },
+                    { name: 'Andrew Robertson', price: 83, photo: 'fotos/422.png' },
+                    { name: 'Nuno Mendes', price: 72, photo: 'fotos/423.png' },
+                    { name: 'Alejandro Balde', price: 68, photo: 'fotos/424.png' },
+                    { name: 'Federico Dimarco', price: 61, photo: 'fotos/425.png' }
+                ],
+                'Bueno': [
+                    { name: 'Pervis Estupiñán', price: 30, photo: 'fotos/440.png' },
+                    { name: 'Alejandro Grimaldo', price: 40, photo: 'fotos/441.png' },
+                    { name: 'José Gayà', price: 36, photo: 'fotos/442.png' },
+                    { name: 'Ferland Mendy', price: 28, photo: 'fotos/443.png' },
+                    { name: 'Alvaro Carreras', price: 23, photo: 'fotos/444.png' },
+                    { name: 'Riccardo Calafiori', price: 50, photo: 'fotos/445.png' },
+                    { name: 'Giovanni Di Lorenzo', price: 38, photo: 'fotos/446.png' },
+                ],
+                'Normal': [
+                { name: 'Marc Cucurella', price: 27, photo: 'fotos/460.png' },
+                    { name: 'Marcos Alonso', price: 10, photo: 'fotos/461.png' },
+                    { name: 'Renan Lodi', price: 13, photo: 'fotos/462.png' },
+                    { name: 'Nicolás Tagliafico', price: 16, photo: 'fotos/463.png' },
+                    { name: 'Myles Lewis-Skelly', price: 27, photo: 'fotos/464.png' },
+                    { name: 'Raphaël Guerreiro', price: 20, photo: 'fotos/465.png' },
+                    { name: 'Mojica ', price: 18, photo: 'fotos/466.png' }
+                ],
+                'Malo': [
+                    { name: 'Gerard Martín', price: 6, photo: 'fotos/480.png' },
+                    { name: 'Junior Firpo', price: 6, photo: 'fotos/481.png' },
+                    { name: 'Miguel Gutiérrez', price: 5, photo: 'fotos/482.png' },
+                    { name: 'Álvaro Odriozola', price: 6, photo: 'fotos/483.png' },
+                    { name: 'Sergio Reguilón', price: 8, photo: 'fotos/484.png' },
+                    { name: 'Sergi Cardona', price: 9, photo: 'fotos/485.png' },
+                    { name: 'Abel Bretones', price: 7, photo: 'fotos/486.png' },
+                    { name: 'Pep Chavarría', price: 6, photo: 'fotos/487.png' },
+                    { name: 'Gabriel Suazo', price: 8, photo: 'fotos/488.png' }
+                ]
+            },
+            'Mediocentro Defensivo': {
+                'PRIME': [
+                    { name: 'Claude Makélélé PRIME', price: 120, photo: 'fotos/500.png' },
+                    { name: 'Sergio Busquets PRIME', price: 115, photo: 'fotos/501.png' },
+                    { name: 'Patrick Vieira PRIME', price: 110, photo: 'fotos/502.png' },
+                    { name: 'Xabi Alonso PRIME', price: 100, photo: 'fotos/503.png' },
+                    { name: 'Andrea Pirlo PRIME', price: 98, photo: 'fotos/504.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Rodri', price: 112, photo: 'fotos/520.png' },
+                    { name: 'Joshua Kimmich', price: 99, photo: 'fotos/521.png' },
+                    { name: 'Declan Rice', price: 108, photo: 'fotos/522.png' },
+                    { name: 'Moisés Caicedo', price: 90, photo: 'fotos/523.png' },
+                    { name: 'Casemiro', price: 81, photo: 'fotos/524.png' },
+                    { name: 'Martín Zubimendi', price: 54, photo: 'fotos/525.png' }
+                ],
+                'Bueno': [
+                    { name: 'Bruno Guimarães', price: 65, photo: 'fotos/540.png' },
+                    { name: 'Aurélien Tchouaméni', price: 86, photo: 'fotos/541.png' },
+                    { name: 'Manuel Ugarte', price: 45, photo: 'fotos/542.png' },
+                    { name: 'João Palhinha', price: 41, photo: 'fotos/543.png' },
+                    { name: 'Marcelo Brozović', price: 49, photo: 'fotos/544.png' },
+                    { name: 'Enzo Fernández', price: 72, photo: 'fotos/545.png' }
+                ],
+                'Normal': [
+                    { name: 'Jorginho', price: 18, photo: 'fotos/560.png' },
+                    { name: 'Thomas Partey', price: 23, photo: 'fotos/561.png' },
+                    { name: 'Hakan Çalhanoğlu', price: 12, photo: 'fotos/562.png' },
+                    { name: 'Marc Casadó', price: 8, photo: 'fotos/563.png' },
+                    { name: 'Weston McKennie', price: 20, photo: 'fotos/564.png' },
+                    { name: 'Rodrigo Bentancur', price: 22, photo: 'fotos/565.png' }
+                ],
+                'Malo': [
+                    { name: 'Oriol Romeu', price: 6, photo: 'fotos/580.png' },
+                    { name: 'Leandro Paredes', price: 13, photo: 'fotos/581.png' },
+                    { name: 'Kalvin Phillips', price: 25, photo: 'fotos/582.png' },
+                    { name: 'Sofyan Amrabat', price: 18, photo: 'fotos/583.png' },
+                    { name: 'Pape Gueye', price: 16, photo: 'fotos/584.png' }
+                ]
+            },
+            'Mediocentro': {
+                'PRIME': [
+                    { name: 'Zinedine Zidane PRIME', price: 150, photo: 'fotos/600.png' },
+                    { name: 'Andrés Iniesta PRIME', price: 140, photo: 'fotos/601.png' },
+                    { name: 'Xavi Hernández PRIME', price: 130, photo: 'fotos/602.png' },
+                    { name: 'Luka Modrić PRIME', price: 120, photo: 'fotos/603.png' },
+                    { name: 'Toni Kroos PRIME', price: 110, photo: 'fotos/604.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Jude Bellingham', price: 130, photo: 'fotos/620.png' },
+                    { name: 'Kevin De Bruyne', price: 126, photo: 'fotos/621.png' },
+                    { name: 'Vitinha', price: 114, photo: 'fotos/622.png' },
+                    { name: 'Alexis Mac Allister', price: 100, photo: 'fotos/623.png' },
+                    { name: 'Pedri', price: 99, photo: 'fotos/624.png' },
+                    { name: 'Federico Valverde', price: 108, photo: 'fotos/625.png' }
+                ],
+                'Bueno': [
+                    { name: 'Frenkie de Jong', price: 81, photo: 'fotos/640.png' },
+                    { name: 'Bruno Fernandes', price: 76, photo: 'fotos/641.png' },
+                    { name: 'İlkay Gündoğan', price: 32, photo: 'fotos/642.png' },
+                    { name: 'Nicolò Barella', price: 86, photo: 'fotos/643.png' },
+                    { name: 'João Neves', price: 59, photo: 'fotos/644.png' },
+                    { name: 'Sandro Tonali', price: 49, photo: 'fotos/645.png' }
+                ],
+                'Normal': [
+                    { name: 'Gavi', price: 27, photo: 'fotos/660.png' },
+                    { name: 'Kobbie Mainoo', price: 43, photo: 'fotos/661.png' },
+                    { name: 'Pablo Barrios', price: 59, photo: 'fotos/662.png' },
+                    { name: 'Tijjani Reijnders', price: 45, photo: 'fotos/663.png' },
+                    { name: 'Warren Zaïre-Emeryl', price: 36, photo: 'fotos/664.png' },
+                    { name: 'Eduardo Camavinga', price: 72, photo: 'fotos/665.png' }
+                ],
+                'Malo': [
+                    { name: 'Jordan Henderson', price: 10, photo: 'fotos/680.png' },
+                    { name: 'Rodrigo De Paul', price: 12, photo: 'fotos/681.png' },
+                    { name: 'Conor Gallagher', price: 22, photo: 'fotos/682.png' },
+                    { name: 'Donny van de Beek', price: 10, photo: 'fotos/683.png' },
+                    { name: 'Arthur Melo', price: 8, photo: 'fotos/684.png' }
+                ]
+            },
+            'Mediocentro Ofensivo': {
+                'PRIME': [
+                    { name: 'Diego Maradona PRIME', price: 180, photo: 'fotos/700.png' },
+                    { name: 'Johan Cruyff PRIME', price: 170, photo: 'fotos/701.png' },
+                    { name: 'Ronaldinho PRIME', price: 160, photo: 'fotos/702.png' },
+                    { name: 'Kaká PRIME', price: 140, photo: 'fotos/703.png' },
+                    { name: 'Zico PRIME', price: 130, photo: 'fotos/704.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Jamal Musiala', price: 108, photo: 'fotos/720.png' },
+                    { name: 'Florian Wirtz', price: 99, photo: 'fotos/721.png' },
+                    { name: 'Martin Ødegaard', price: 108, photo: 'fotos/722.png' },
+                    { name: 'Antoine Griezmann', price: 90, photo: 'fotos/723.png' },
+                    { name: 'Paulo Dybala', price: 63, photo: 'fotos/724.png' },
+                    { name: 'cole palmer', price: 81, photo: 'fotos/725.png' },
+                ],
+                'Bueno': [
+                    { name: 'Fermín López', price: 54, photo: 'fotos/740.png' },
+                    { name: 'Kai Havertz', price: 50, photo: 'fotos/741.png' },
+                    { name: 'Arda Güler', price: 72, photo: 'fotos/742.png' },
+                    { name: 'Dominik Szoboszlai', price: 59, photo: 'fotos/743.png' },
+                    { name: 'Dani Olmo', price: 53, photo: 'fotos/744.png' },
+                    { name: 'Xavi Simons', price: 45, photo: 'fotos/745.png' }
+                ],
+                'Normal': [
+                    { name: 'Lucas Paquetá', price: 54, photo: 'fotos/760.png' },
+                    { name: 'Giovani Lo Celso', price: 43, photo: 'fotos/761.png' },
+                    { name: 'Philippe Coutinho', price: 10, photo: 'fotos/762.png' },
+                    { name: 'Isco', price: 8, photo: 'fotos/763.png' },
+                    { name: 'João Félix', price: 20, photo: 'fotos/764.png' }
+                ],
+                'Malo': [
+                    { name: 'Mason Mount', price: 6, photo: 'fotos/780.png' },
+                    { name: 'Mesut Özil', price: 6, photo: 'fotos/781.png' },
+                    { name: 'Nico Paz', price: 6, photo: 'fotos/782.png' },
+                    { name: 'Riqui Puig', price: 5, photo: 'fotos/783.png' },
+                    { name: 'Marco Asensio ', price: 8, photo: 'fotos/784.png' }
+                ]
+            },
+            'Extremo Derecho': {
+                'PRIME': [
+                    { name: 'Lionel Messi PRIME', price: 200, photo: 'fotos/800.png' },
+                    { name: 'Garrincha PRIME', price: 150, photo: 'fotos/801.png' },
+                    { name: 'Luis Figo PRIME', price: 120, photo: 'fotos/802.png' },
+                    { name: 'George Best PRIME', price: 130, photo: 'fotos/803.png' },
+                    { name: 'Arjen Robben PRIME', price: 110, photo: 'fotos/804.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Mohamed Salah', price: 117, photo: 'fotos/820.png' },
+                    { name: 'Bukayo Saka', price: 108, photo: 'fotos/821.png' },
+                    { name: 'Rodrygo', price: 95, photo: 'fotos/822.png' },
+                    { name: 'Lamine Yamal', price: 130, photo: 'fotos/823.png' },
+                    { name: 'Ousmane Dembélé', price: 72, photo: 'fotos/824.png' },
+                    { name: 'Michael Olise', price: 73, photo: 'fotos/825.png' }
+                ],
+                'Bueno': [
+                    { name: 'Phil Foden', price: 54, photo: 'fotos/840.png' },
+                    { name: 'Antony', price: 50, photo: 'fotos/841.png' },
+                    { name: 'Jadon Sancho', price: 36, photo: 'fotos/842.png' },
+                    { name: 'Rayan Cherki', price: 63, photo: 'fotos/843.png' },
+                    { name: 'Désiré Doué', price: 62, photo: 'fotos/844.png' },
+                    { name: 'Leon Bailey', price: 27, photo: 'fotos/845.png' }
+                ],
+                'Normal': [
+                    { name: 'Ángel Di María', price: 12, photo: 'fotos/860.png' },
+                    { name: 'Ferran Torres', price: 27, photo: 'fotos/861.png' },
+                    { name: 'Federico Chiesa', price: 10, photo: 'fotos/862.png' },
+                    { name: 'Brahim Díaz', price: 16, photo: 'fotos/863.png' },
+                    { name: 'Dodi Lukébakio', price: 22, photo: 'fotos/864.png' }
+                ],
+                'Malo': [
+                    { name: 'Nicolas Pépé', price: 12, photo: 'fotos/880.png' },
+                    { name: 'Lucas Vázquez', price: 10, photo: 'fotos/881.png' },
+                    { name: 'Mason Greenwood', price: 10, photo: 'fotos/882.png' },
+                    { name: 'Christian Pulisic', price: 8, photo: 'fotos/883.png' },
+                    { name: 'Samuel Chukwueze', price: 6, photo: 'fotos/884.png' }
+                ]
+            },
+            'Extremo Izquierdo': {
+                'PRIME': [
+                    { name: 'Cristiano Ronaldo PRIME', price: 200, photo: 'fotos/900.png' },
+                    { name: 'Ronaldinho PRIME', price: 160, photo: 'fotos/901.png' },
+                    { name: 'Neymar PRIME', price: 150, photo: 'fotos/902.png' },
+                    { name: 'George Best PRIME', price: 130, photo: 'fotos/903.png' },
+                    { name: 'Thierry Henry PRIME', price: 110, photo: 'fotos/904.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Vinícius Júnior', price: 144, photo: 'fotos/920.png' },
+                    { name: 'Raphinha', price: 99, photo: 'fotos/921.png' },
+                    { name: 'Khvicha Kvaratskhelia', price: 90, photo: 'fotos/922.png' },
+                    { name: 'Nico Williams', price: 86, photo: 'fotos/923.png' },
+                    { name: 'Luis Díaz', price: 81, photo: 'fotos/924.png' },
+                    { name: 'bradley Barcola', price: 77, photo: 'fotos/925.png' }
+                ],
+                'Bueno': [
+                    { name: 'Rafael Leão', price: 81, photo: 'fotos/940.png' },
+                    { name: 'Heung-min Son', price: 72, photo: 'fotos/941.png' },
+                    { name: 'Jack Grealish', price: 65, photo: 'fotos/942.png' },
+                    { name: 'cody Gakpo', price: 34, photo: 'fotos/943.png' },
+                    { name: 'Jérémy Doku', price: 52, photo: 'fotos/944.png' },
+                    { name: 'Gabriel Martinelli', price: 51, photo: 'fotos/945.png' }
+                ],
+                'Normal': [
+                    { name: 'Marcus Rashford', price: 43, photo: 'fotos/960.png' },
+                    { name: 'Kingsley Coman ', price: 25, photo: 'fotos/961.png' },
+                    { name: 'Alex Baena ', price: 29, photo: 'fotos/962.png' },
+                    { name: 'Yeremy Pino', price: 23, photo: 'fotos/963.png' },
+                    { name: 'Serge Gnabry', price: 18, photo: 'fotos/964.png' },
+                    { name: 'Mitoma', price: 27, photo: 'fotos/965.png' }
+                ],
+                'Malo': [
+                    { name: 'Leandro Trossard', price: 6, photo: 'fotos/980.png' },
+                    { name: 'Alberto Moleiro ', price: 12, photo: 'fotos/981.png' },
+                    { name: 'Anthony Martial', price: 12, photo: 'fotos/982.png' },
+                    { name: 'Yannick Carrasco', price: 18, photo: 'fotos/983.png' },
+                    { name: 'Alejandro Garnacho', price: 6, photo: 'fotos/984.png' }
+                ]
+            },
+            'Delantero Centro': {
+                'PRIME': [
+                    { name: 'Ronaldo Nazário PRIME', price: 200, photo: 'fotos/1000.png' },
+                    { name: 'Pelé PRIME', price: 200, photo: 'fotos/1001.png' },
+                    { name: 'Marco van Basten PRIME', price: 150, photo: 'fotos/1002.png' },
+                    { name: 'Luiz suarez PRIME', price: 140, photo: 'fotos/1003.png' },
+                    { name: 'Gerd Müller PRIME', price: 130, photo: 'fotos/1004.png' }
+                ],
+                'Muy Bueno': [
+                    { name: 'Erling Haaland', price: 162, photo: 'fotos/1020.png' },
+                    { name: 'Kylian Mbappé', price: 171, photo: 'fotos/1021.png' },
+                    { name: 'Harry Kane', price: 135, photo: 'fotos/1022.png' },
+                    { name: 'Robert Lewandowski', price: 108, photo: 'fotos/1023.png' },
+                    { name: 'Alexander Isak', price: 99, photo: 'fotos/1024.png' },
+                    { name: 'Lautaro Martínez', price: 90, photo: 'fotos/1025.png' },
+                    { name: 'Julián Alvarez', price: 100, photo: 'fotos/1026.png' }
+                ],
+                'Bueno': [
+                    { name: 'Victor Osimhen', price: 54, photo: 'fotos/1040.png' },
+                    { name: 'Dusan Vlahović', price: 63, photo: 'fotos/1041.png' },
+                    { name: 'Álvaro Morata', price: 36, photo: 'fotos/1042.png' },
+                    { name: 'Viktor Gyökeres', price: 59, photo: 'fotos/1043.png' },
+                    { name: 'Jonathan David', price: 50, photo: 'fotos/1044.png' },
+                    { name: 'Rasmus Højlund', price: 52, photo: 'fotos/1045.png' }
+                ],
+                'Normal': [
+                    { name: 'Darwin Núñez', price: 32, photo: 'fotos/1060.png' },
+                    { name: 'Gabriel Jesus', price: 25, photo: 'fotos/1061.png' },
+                    { name: 'Endrick', price: 22, photo: 'fotos/1062.png' },
+                    { name: 'Romelu Lukaku', price: 16, photo: 'fotos/1063.png' },
+                    { name: 'Memphis Depay', price: 14, photo: 'fotos/1064.png' },
+                    { name: 'Iñaki Williams', price: 18, photo: 'fotos/1065.png' }
+                ],
+                'Malo': [
+                { name: 'Luuk de Jong', price: 10, photo: 'fotos/1080.png' },
+                { name: 'Hugo Ekitiké', price: 6, photo: 'fotos/1081.png' },
+                { name: 'Mario Balotelli', price: 8, photo: 'fotos/1082.png' },
+                { name: 'thierno Barry ', price: 10, photo: 'fotos/1083.png' },
+                { name: 'Nicolas Jackson', price: 12, photo: 'fotos/1084.png' }
+                ]
+            },
+        };
+
+        // Normaliza rutas de fotos a 'Fotos/...' y limpia espacios
+        function normalizePhotoPath(p) {
+            if (!p || typeof p !== 'string') return 'Fotos/1.png';
+            let out = p.trim();
+            // Unificar carpeta y separadores
+            out = out.replace(/^fotos\//i, 'Fotos/');
+            out = out.replace(/\\/g, '/');
+            // Si accidentalmente llega con URL vacía
+            if (!out) return 'Fotos/1.png';
+            return out;
+        }
+
+        // Normaliza todos los jugadores al iniciar (evita inconsistencias a futuro)
+        function sanitizePlayers() {
+            try {
+                Object.keys(playersByPosition).forEach(pos => {
+                    const groups = playersByPosition[pos];
+                    Object.keys(groups).forEach(level => {
+                        playersByPosition[pos][level] = (groups[level] || []).map(p => {
+                            if (!p) return p;
+                            return {
+                                ...p,
+                                name: typeof p.name === 'string' ? p.name.trim() : p.name,
+                                price: Number(p.price) || 0,
+                                photo: normalizePhotoPath(p.photo)
+                            };
+                        });
+                    });
+                });
+            } catch (e) {
+                console.warn('sanitizePlayers() error:', e);
+            }
+        }
+
+        // Manifest de fotos disponible en el servidor
+        let photoManifest = new Set();
+        let manifestLoaded = false;
+        let manifestPromise = null;
+        function loadPhotoManifest() {
+            manifestPromise = fetch('/photo-manifest')
+                .then(r => r.ok ? r.json() : { files: [] })
+                .then(({ files }) => {
+                    const set = new Set((files || []).map(f => normalizePhotoPath(f)));
+                    photoManifest = set;
+                    manifestLoaded = true;
+                })
+                .catch(() => { photoManifest = new Set(); manifestLoaded = true; });
+            return manifestPromise;
+        }
+        function photoExists(p) {
+            const n = normalizePhotoPath(p);
+            return photoManifest.size === 0 ? true : photoManifest.has(n);
+        }
+
+        // Definir las posiciones con sus configuraciones específicas
+        const positions = [
+            { name: 'Portero', rounds: 6 },
+            { name: 'Lateral Derecho', rounds: 6 },
+            { name: 'Central Derecho', rounds: 6 },
+            { name: 'Central Izquierdo', rounds: 6 },
+            { name: 'Lateral Izquierdo', rounds: 6 },
+            { name: 'Mediocentro Defensivo', rounds: 6 },
+            { name: 'Mediocentro', rounds: 6 },
+            { name: 'Mediocentro Ofensivo', rounds: 6 },
+            { name: 'Extremo Derecho', rounds: 6 },
+            { name: 'Extremo Izquierdo', rounds: 6 },
+            { name: 'Delantero Centro', rounds: 6 }
+        ];
+        
+        let currentPositionIndex = 0;
+        let playersForCurrentPosition = [];
+        let currentPlayerIndex = 0;
+        let currentRound = 0;
+        // Evitar error cuando se manejen centrales
+        let selectedCentrals = [];
+        // Evitar repetir jugadores a lo largo de todas las rondas/posiciones
+        let shownPlayers = new Set();
+        // Evitar acciones rápidas (confirmar/siguiente) múltiples veces
+        let isAdvancing = false;
+        // Presupuestos por usuario y equipos por usuario
+        let budgetsMap = {};
+        // ===== Mercado de fichajes =====
+        let transferMarketOpen = false;
+        let lastCompletedPosition = '';
+
+        function setTransferMarket(open) {
+            transferMarketOpen = !!open;
+            const pill = document.getElementById('transfer-market-pill');
+            if (pill) {
+                pill.textContent = transferMarketOpen ? 'Mercado: Abierto' : 'Mercado: Cerrado';
+                // Reset base classes first
+                pill.classList.remove('bg-gray-700/40','border-gray-600/70','text-gray-300','bg-emerald-600/20','border-emerald-500/60','text-emerald-300','bg-red-700/70','border-red-500/70','text-red-200','bg-green-700/70','border-green-500/70','text-green-100');
+                if (transferMarketOpen) {
+                    pill.classList.add('bg-green-700/70','border-green-500/70','text-green-100');
+                } else {
+                    pill.classList.add('bg-red-700/70','border-red-500/70','text-red-200');
+                }
+                // Cursor depends on role
+                if (isHost) {
+                    pill.classList.add('cursor-pointer');
+                    pill.classList.remove('cursor-not-allowed','opacity-60');
+                } else {
+                    pill.classList.add('cursor-not-allowed','opacity-60');
+                    pill.classList.remove('cursor-pointer');
+                }
+            }
+            renderOfferCTA();
+        }
+
+        // Abrir mercado al terminar: Central Izquierdo (LCB), Mediocentro Ofensivo (CAM), Lateral Izquierdo (LB), y al finalizar plantilla
+        function onPositionCompleted(name) {
+            // Mercado manual: no acción automática
+            lastCompletedPosition = name;
+        }
+        let teamsByUser = {}; // { userId: [{ positionName, player, price }] }
+        // Mapa de equipos por usuario para poder visualizar plantillas ajenas
+        const teamsMap = {}; // userId -> { positionKey: {name, price, photo} }
+        let viewingUserId = null; // null o userId; null => tú mismo
+        
+        // ===== Lógica de Subasta =====
+        let userBudget = 1100; // en millones
+        let currentBid = 0;   // en millones
+        let hasPurchasedInThisPosition = false; // solo 1 compra por posición (local)
+        let lastBidderId = null; // no permitir pujar dos veces seguidas
+        let winnersThisPosition = 0; // cantidad de adjudicaciones en la posición actual
+        let skipUsedThisPosition = false; // solo 1 salto permitido por posición
+        
+        function formatM(n) { return `$${n}M`; }
+
+        // ===== Online (beta) + Lobby =====
+        let isHost = false; // se define al crear/unirse a una sala
+        let roomCode = '';
+        let inGame = false; // Lobby por defecto
+        let socket = null; // Socket.IO client
+        // Estado sincronizado desde servidor (para invitados)
+        let serverPositionName = '';
+        let serverRounds = 0;
+        // Progreso local de rondas para invitados
+        let guestRoundIndex = 0; // 0 = sin iniciar; 1..serverRounds durante la posición
+        // Usuarios y avatares (prototipo local)
+        const presetAvatars = [
+            'Fotos/P1.png','Fotos/P2.png','Fotos/P3.png','Fotos/P4.png','Fotos/P5.png','Fotos/P6.png'
+        ];
+        let currentUser = {
+            id: Math.random().toString(36).slice(2), // será reemplazado por socket.id al conectar
+            name: '',
+            avatar: presetAvatars[0]
+        };
+        let participants = []; // {id, name, avatar}
+        let participantsData = [];
+        function randomCode(len = 6) {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let out = '';
+            for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+            return out;
+        }
+        function createRoom() {
+            if (!socket) return;
+            const nameEl = document.getElementById('display-name');
+            const errEl = document.getElementById('name-error');
+            const name = (nameEl?.value || '').trim();
+            if (!name || name.length < 2) {
+                if (errEl) { errEl.textContent = 'Ingresa un nombre (mínimo 2 caracteres).'; errEl.classList.remove('hidden'); }
+                if (nameEl) nameEl.classList.add('ring-2','ring-red-500');
+                setTimeout(() => { if (nameEl) nameEl.classList.remove('ring-2','ring-red-500'); }, 1500);
+                return;
+            }
+            if (errEl) errEl.classList.add('hidden');
+            currentUser.name = name;
+            socket.emit('create_room', { name: currentUser.name, avatar: currentUser.avatar });
+        }
+        function joinRoom() {
+            if (!socket) return;
+            const input = document.getElementById('join-code');
+            const code = (input?.value || '').trim().toUpperCase();
+            const nameEl = document.getElementById('display-name');
+            const errEl = document.getElementById('name-error');
+            const name = (nameEl?.value || '').trim();
+            if (!name || name.length < 2) {
+                if (errEl) { errEl.textContent = 'Ingresa un nombre (mínimo 2 caracteres).'; errEl.classList.remove('hidden'); }
+                if (nameEl) nameEl.classList.add('ring-2','ring-red-500');
+                setTimeout(() => { if (nameEl) nameEl.classList.remove('ring-2','ring-red-500'); }, 1500);
+                return;
+            }
+            if (!code) {
+                if (input) { input.classList.add('ring-2','ring-red-500'); setTimeout(() => input.classList.remove('ring-2','ring-red-500'), 1500); }
+                return;
+            }
+            if (errEl) errEl.classList.add('hidden');
+            currentUser.name = name;
+            socket.emit('join_room', { code, name: currentUser.name, avatar: currentUser.avatar });
+        }
+        function updateOnlineUI() {
+            const roleEl = document.getElementById('role-display');
+            const codeEl = document.getElementById('room-code');
+            const confirmBtn = document.getElementById('confirm-button');
+            const nextBtn = document.getElementById('next-round-button');
+            const toggleMarketBtn = document.getElementById('toggle-market');
+            const startBtn = document.getElementById('start-game');
+            const lobbyWrap = document.getElementById('lobby');
+            const stage = document.getElementById('game-stage');
+            if (roleEl) roleEl.textContent = isHost ? 'Anfitrión' : 'Invitado';
+            if (codeEl) codeEl.textContent = roomCode ? `Sala: ${roomCode}` : 'Sin sala';
+            if (confirmBtn) confirmBtn.classList.toggle('hidden', !isHost || !inGame);
+            if (nextBtn) nextBtn.classList.toggle('hidden', !isHost || !inGame);
+            if (toggleMarketBtn) toggleMarketBtn.classList.toggle('hidden', !isHost || !inGame);
+            if (startBtn) startBtn.classList.toggle('hidden', !(isHost && !!roomCode && !inGame));
+            if (lobbyWrap) lobbyWrap.classList.toggle('hidden', inGame);
+            if (stage) stage.classList.toggle('hidden', !inGame);
+        }
+
+        function startGame() {
+            if (!isHost || !roomCode || !socket) return;
+            socket.emit('start_game', { code: roomCode });
+        }
+
+        function ensureSelfInParticipants() {
+            if (!participants.some(p => p.id === currentUser.id)) {
+                participants.push({ ...currentUser });
+            } else {
+                // actualizar datos por si cambió el nombre/avatar
+                participants = participants.map(p => p.id === currentUser.id ? { ...currentUser } : p);
+            }
+        }
+        function renderParticipants() {
+            const list = document.getElementById('participants-list');
+            if (!list) return;
+            if (!roomCode) { list.innerHTML = '<div class="text-gray-400 text-sm">Crea o únete a una sala para ver los participantes.</div>'; return; }
+            if (!participants.length) { list.innerHTML = '<div class="text-gray-400 text-sm">Aún no hay participantes.</div>'; return; }
+            list.innerHTML = participants.map(p => `
+                <div class="flex items-center gap-3 p-2 rounded-lg bg-gray-900/40 border border-gray-800">
+                    <img src="${p.avatar}" alt="${p.name}" class="w-9 h-9 rounded-full object-cover bg-black/30 border border-gray-700"/>
+                    <div class="flex-1">
+                        <div class="text-white text-sm font-semibold">${p.name}</div>
+                        <div class="text-xs text-gray-400">${p.id.slice(0,6)}</div>
+                    </div>
+                    ${p.id === currentUser.id ? '<span class="text-emerald-400 text-xs font-bold">Tú</span>' : ''}
+                </div>
+            `).join('');
+        }
+
+        // Renderiza barra de avatares para ver plantillas (4-3-3) de otros jugadores
+        function renderTeamViewersBar() {
+            const bar = document.getElementById('team-viewers-bar');
+            if (!bar) return;
+            if (!participants || participants.length === 0) { bar.innerHTML = ''; return; }
+            // Asegurar que existan equipos vacíos para todos
+            participants.forEach(p => ensureTeamMap(p.id));
+            const activeId = viewingUserId || currentUser.id;
+            // Orden: tú primero, luego el resto
+            const ordered = [...participants].sort((a,b) => (a.id===currentUser.id? -1 : b.id===currentUser.id? 1 : 0));
+            bar.innerHTML = ordered.map(p => {
+                const isActive = p.id === activeId;
+                const you = p.id === currentUser.id;
+                return `
+                    <button type="button" class="viewer-btn ${isActive ? 'active' : ''}" data-userid="${p.id}" title="${you ? 'Tu equipo' : p.name}">
+                        <img src="${p.avatar}" alt="${p.name}"/>
+                    </button>
+                `;
+            }).join('');
+            // Listeners de click
+            bar.querySelectorAll('.viewer-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const uid = btn.getAttribute('data-userid');
+                    if (!uid) return;
+                    // Si clickeas tu propio avatar, mostrar tu equipo (viewingUserId = null)
+                    viewingUserId = (uid === currentUser.id) ? null : uid;
+                    // Marcar activo
+                    bar.querySelectorAll('.viewer-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    updateTeamUI();
+                    renderOfferCTA();
+                });
+            });
+        }
+
+        // ===== Equipo (formación 4-3-3) =====
+        const formationSlots = [
+            { key: 'Extremo Izquierdo', label: 'LW' },
+            { key: 'Delantero Centro', label: 'ST' },
+            { key: 'Extremo Derecho', label: 'RW' },
+            { key: 'Mediocentro Ofensivo', label: 'CAM' },
+            { key: 'Mediocentro', label: 'CM' },
+            { key: 'Mediocentro Defensivo', label: 'CDM' },
+            { key: 'Lateral Izquierdo', label: 'LB' },
+            { key: 'Central Izquierdo', label: 'LCB' },
+            { key: 'Central Derecho', label: 'RCB' },
+            { key: 'Lateral Derecho', label: 'RB' },
+            { key: 'Portero', label: 'GK' },
+        ];
+        const team = {};
+        formationSlots.forEach(s => team[s.key] = null);
+
+        function ensureTeamMap(userId) {
+            if (!userId) return;
+            if (!teamsMap[userId]) {
+                teamsMap[userId] = {};
+                formationSlots.forEach(s => { teamsMap[userId][s.key] = null; });
+            }
+        }
+
+        function slotCard(teamObj, slotKey, label) {
+            const data = teamObj[slotKey];
+            if (data) {
+                return `
+                <div class="team-slot">
+                    <span class="team-slot__badge">${label}</span>
+                    <div class="team-slot__photo">
+                        <img src="${data.photo}" alt="${data.name}" />
+                    </div>
+                    <div class="team-slot__name" title="${data.name}">${data.name}</div>
+                    <div class="team-slot__price">${formatM(data.price)}</div>
+                </div>`;
+            }
+            return `
+            <div class="team-slot team-slot--empty">
+                <div class="team-slot__photo flex items-center justify-center text-gray-400 text-sm font-bold">${label}</div>
+                <div class="team-slot__label">Vacío</div>
+            </div>`;
+        }
+
+        function updateTeamUI() {
+            const wrap = document.getElementById('team-slots');
+            const title = document.querySelector('#team-panel h3');
+            if (!wrap) return;
+            const targetId = viewingUserId || currentUser.id;
+            ensureTeamMap(targetId);
+            const teamObj = (targetId === currentUser.id) ? team : teamsMap[targetId];
+            // Mostrar nombre y presupuesto del jugador seleccionado
+            const target = participants.find(p => p.id === targetId) || { name: 'Tú' };
+            let targetBudget = userBudget;
+            if (budgetsMap && budgetsMap[targetId] !== undefined) {
+                targetBudget = budgetsMap[targetId];
+            }
+            if (title) {
+                const you = targetId === currentUser.id;
+                title.innerHTML = `<span class="accent">${you ? 'Tu Equipo' : target.name}</span> <span class="text-gray-300 font-normal">(4-3-3)</span><div class="text-sm text-emerald-300 font-extrabold mt-1">Presupuesto: ${formatM(targetBudget||0)}</div>`;
+            }
+            const lw = slotCard(teamObj, 'Extremo Izquierdo', 'LW');
+            const st = slotCard(teamObj, 'Delantero Centro', 'ST');
+            const rw = slotCard(teamObj, 'Extremo Derecho', 'RW');
+            const cam = slotCard(teamObj, 'Mediocentro Ofensivo', 'CAM');
+            const cm = slotCard(teamObj, 'Mediocentro', 'CM');
+            const cdm = slotCard(teamObj, 'Mediocentro Defensivo', 'CDM');
+            const lb = slotCard(teamObj, 'Lateral Izquierdo', 'LB');
+            const lcb = slotCard(teamObj, 'Central Izquierdo', 'LCB');
+            const rcb = slotCard(teamObj, 'Central Derecho', 'RCB');
+            const rb = slotCard(teamObj, 'Lateral Derecho', 'RB');
+            const gk = slotCard(teamObj, 'Portero', 'GK');
+            wrap.innerHTML = `
+                <div class="space-y-4">
+                    <!-- Delanteros -->
+                    <div class="team-line">${lw}${st}${rw}</div>
+                    <!-- Mediocampo -->
+                    <div class="team-line">${cam}${cm}${cdm}</div>
+                    <!-- Defensa -->
+                    <div class="team-line">${lb}${lcb}${rcb}${rb}</div>
+                    <!-- Portero -->
+                    <div class="flex items-center justify-center">${gk}</div>
+                </div>
+            `;
+            renderOfferCTA();
+        }
+
+        function renderOfferCTA() {
+            // Mostrar botón "Ofertar" cuando: mercado abierto + estás viendo otro usuario
+            const panel = document.getElementById('team-panel');
+            if (!panel) return;
+            let cta = document.getElementById('offer-cta');
+            if (!cta) {
+                cta = document.createElement('div');
+                cta.id = 'offer-cta';
+                cta.className = 'mb-3';
+                panel.insertBefore(cta, document.getElementById('team-slots'));
+            }
+            const viewingOther = !!viewingUserId && viewingUserId !== currentUser.id;
+            if (transferMarketOpen && viewingOther) {
+                cta.innerHTML = `<button id="open-offer-modal" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg transition-all">Ofertar</button>`;
+                const btn = document.getElementById('open-offer-modal');
+                if (btn) btn.onclick = openOfferModal;
+                cta.classList.remove('hidden');
+            } else {
+                cta.classList.add('hidden');
+                cta.innerHTML = '';
+            }
+        }
+
+        function registerPurchase(positionKey, player, price) {
+            // Actualiza tu propio equipo local
+            team[positionKey] = { name: player.name, price: price, photo: player.photo };
+            // Reflejar en teamsMap para visualización unificada
+            ensureTeamMap(currentUser.id);
+            teamsMap[currentUser.id][positionKey] = { name: player.name, price: price, photo: player.photo };
+            updateTeamUI();
+        }
+
+        function updateAuctionUI(player) {
+            const budgetEl = document.getElementById('budget-display');
+            const bidInfo = document.getElementById('current-bid-info');
+            const bidAmountEl = document.getElementById('current-bid-bottom');
+            const bidderAvatar = document.getElementById('current-bidder-avatar');
+            const bidderName = document.getElementById('current-bidder-name');
+            const input = document.getElementById('bid-input');
+            const msg = document.getElementById('auction-msg');
+            if (budgetEl) budgetEl.textContent = formatM(userBudget);
+            if (bidAmountEl) bidAmountEl.textContent = formatM(currentBid);
+            if (bidInfo) {
+                if (currentBid > 0 && lastBidderId) {
+                    const p = participants.find(x => x.id === lastBidderId);
+                    if (p && bidderAvatar) bidderAvatar.src = p.avatar || '';
+                    if (p && bidderName) bidderName.textContent = p.name || 'Jugador';
+                    bidInfo.classList.remove('hidden');
+                } else {
+                    bidInfo.classList.add('hidden');
+                }
+            }
+            if (input) {
+                const min = player && typeof player.price === 'number' ? player.price : 0;
+                input.min = String(min);
+                input.step = '5';
+                const minAllowed = currentBid > 0 ? (currentBid + 5) : Math.max(min, 0);
+                input.value = String(minAllowed);
+                input.max = String(userBudget);
+                input.disabled = userBudget < min || hasPurchasedInThisPosition;
+            }
+            if (msg) {
+                if (hasPurchasedInThisPosition) msg.textContent = 'Ya compraste en esta posición. Espera a la siguiente para volver a pujar.';
+                else if (userBudget <= 0) msg.textContent = 'Sin presupuesto disponible.';
+                else if (player && userBudget < player.price) msg.textContent = 'Presupuesto insuficiente para la puja mínima.';
+                else msg.textContent = '';
+            }
+            const buyBtn = document.getElementById('buy-button');
+            const minusBtn = document.getElementById('minus5');
+            const plusBtn = document.getElementById('plus5');
+            const canBid = player && userBudget >= (player.price || 0);
+            const isLastBidder = lastBidderId && lastBidderId === currentUser.id && currentBid > 0;
+            if (buyBtn) buyBtn.disabled = !canBid || hasPurchasedInThisPosition || isLastBidder;
+            if (minusBtn) minusBtn.disabled = !canBid || hasPurchasedInThisPosition || isLastBidder;
+            if (plusBtn) plusBtn.disabled = !canBid || hasPurchasedInThisPosition || isLastBidder;
+        }
+
+        function setRoundTitle(positionName, current, total) {
+            const roundTitle = document.getElementById('round-title');
+            if (!roundTitle) return;
+            const posUpper = String(positionName || '').toUpperCase();
+            roundTitle.innerHTML = `
+                <div class="pos-title text-white drop-shadow-sm font-black tracking-wide">${posUpper}</div>
+                <div class="mt-1"><span class="progress-pill">${current}/${total}</span></div>
+            `;
+            const titleEl = roundTitle.querySelector('.pos-title');
+            if (titleEl) {
+                const words = posUpper.trim().split(/\s+/).length;
+                if (posUpper.length > 14) titleEl.classList.add('x-compact');
+                else if (words >= 2) titleEl.classList.add('compact');
+            }
+        }
+
+        function buildCategoryWeights(playerCategories) {
+            const baseWeights = {
+                'PRIME': 8,
+                'Muy Bueno': 16,
+                'Bueno': 22,
+                'Normal': 29,
+                'Malo': 25,
+            };
+            const available = Object.keys(baseWeights).filter(name => Array.isArray(playerCategories[name]) && playerCategories[name].length > 0);
+            if (available.length === 0) return {};
+            const total = available.reduce((sum, name) => sum + baseWeights[name], 0);
+            const weights = {};
+            available.forEach(name => { weights[name] = baseWeights[name] / total; });
+            return weights;
+        }
+
+        function weightedChoice(weightMap) {
+            const pairs = Object.entries(weightMap).filter(([_, w]) => typeof w === 'number' && w > 0);
+            if (pairs.length === 0) return null;
+            const total = pairs.reduce((sum, [_, w]) => sum + w, 0);
+            let r = Math.random() * total;
+            for (const [key, w] of pairs) {
+                if ((r -= w) <= 0) return key;
+            }
+            return pairs[pairs.length - 1][0];
+        }
+
+        // Renderizar el jugador recibido por socket (invitados)
+        function renderServerPlayer() {
+            const player = playersForCurrentPosition[currentPlayerIndex];
+            if (!player) return;
+            // Reset subasta y UI
+            currentBid = 0;
+            lastBidderId = null;
+            updateAuctionUI(player);
+            // Mostrar el índice sincronizado desde el servidor para invitados
+            const shownIndexGuest = Math.max(1, guestRoundIndex || 1);
+            const totalGuest = serverRounds || positions[currentPositionIndex].rounds || 1;
+            setRoundTitle(serverPositionName || positions[currentPositionIndex].name, shownIndexGuest, totalGuest);
+
+            const playerCard = document.getElementById('player-card');
+            if (playerCard) {
+                playerCard.classList.remove('is-revealed');
+                playerCard.classList.remove('hidden');
+                playerCard.style.display = 'block';
+                // Antes de cargar, ocultamos y luego mostramos como en host
+                playerCard.style.opacity = '0';
+                playerCard.querySelectorAll('*').forEach(el => {
+                    el.style.transition = 'opacity 0s';
+                    el.style.opacity = '0';
+                });
+            }
+            // Controles: en invitados no se muestran nunca
+            const confirmBtn = document.getElementById('confirm-button');
+            const nextBtn = document.getElementById('next-round-button');
+            if (confirmBtn) confirmBtn.classList.add('hidden');
+            if (nextBtn) nextBtn.classList.add('hidden');
+            // Ocultar nombre delante y fijar precio mínimo
+            const nameEl = document.getElementById('player-name');
+            if (nameEl) nameEl.textContent = '???';
+            const priceDisplay = document.getElementById('price-display');
+            const backPriceDisplay = document.getElementById('back-price-display');
+            if (priceDisplay) priceDisplay.textContent = `$${player.price}M`;
+            if (backPriceDisplay) backPriceDisplay.textContent = `$${player.price}M`;
+
+            const playerPhoto = document.getElementById('player-photo');
+            const img = new Image();
+            img.onload = function() {
+                if (playerPhoto) playerPhoto.src = this.src;
+                if (playerCard) {
+                    playerCard.style.transition = 'opacity 0.3s ease-in-out';
+                    playerCard.style.opacity = '1';
+                    setTimeout(() => {
+                        playerCard.querySelectorAll('*').forEach(el => {
+                            el.style.transition = 'opacity 0.3s ease-in-out';
+                            el.style.opacity = '1';
+                        });
+                    }, 50);
+                }
+            };
+            img.onerror = function() {
+                if (playerPhoto) playerPhoto.src = 'Fotos/1.png';
+                if (playerCard) {
+                    playerCard.style.transition = 'opacity 0.3s ease-in-out';
+                    playerCard.style.opacity = '1';
+                    setTimeout(() => {
+                        playerCard.querySelectorAll('*').forEach(el => {
+                            el.style.transition = 'opacity 0.3s ease-in-out';
+                            el.style.opacity = '1';
+                        });
+                    }, 50);
+                }
+            };
+            const normalizedPhoto = normalizePhotoPath(player.photo);
+            img.src = normalizedPhoto;
+
+            // Fallback por si el onload no dispara (caché raro)
+            setTimeout(() => {
+                if (!playerCard) return;
+                if (playerCard.style.opacity === '0') {
+                    playerCard.style.transition = 'opacity 0.3s ease-in-out';
+                    playerCard.style.opacity = '1';
+                    setTimeout(() => {
+                        playerCard.querySelectorAll('*').forEach(el => {
+                            el.style.transition = 'opacity 0.3s ease-in-out';
+                            el.style.opacity = '1';
+                        });
+                    }, 50);
+                }
+            }, 250);
+
+            const clueImage = document.getElementById('player-clue-image');
+            const fallbackClue = 'Fotos/1.png';
+            if (clueImage) {
+                const normalizedClue = normalizePhotoPath(player.photo);
+                clueImage.src = normalizedClue;
+                clueImage.onerror = () => { clueImage.src = fallbackClue; };
+                clueImage.style.display = 'block';
+            }
+            const cluesTitle = document.getElementById('clues-title');
+            const cluesText = document.getElementById('player-clues');
+            if (cluesTitle) cluesTitle.style.display = 'none';
+            if (cluesText) cluesText.style.display = 'none';
+        }
+
+        // Enviar puja al servidor
+        function placeBid() {
+            if (!playersForCurrentPosition || !playersForCurrentPosition[currentPlayerIndex]) return;
+            const input = document.getElementById('bid-input');
+            let v = parseInt(input && input.value ? input.value : '0', 10);
+            if (!Number.isFinite(v)) v = 0;
+            if (v % 5 !== 0) v = Math.ceil(v / 5) * 5; // a múltiplos de 5
+            if (!socket || !roomCode) return;
+            socket.emit('place_bid', { code: roomCode, value: v });
+            const msg = document.getElementById('auction-msg');
+            if (msg) msg.textContent = 'Puja enviada...';
+        }
+
+        // Función para empezar una nueva posición
+        async function startNewPosition() {
+            // Asegurar que el manifest esté cargado antes de filtrar por fotos existentes
+            if (!manifestLoaded) {
+                try { await (manifestPromise || loadPhotoManifest()); } catch(e) {}
+            }
+            if (currentPositionIndex >= positions.length) {
+                document.getElementById('game-container').classList.add('hidden');
+                document.getElementById('end-game-message').classList.remove('hidden');
+                // Al terminar toda la plantilla, abrir mercado
+                setTransferMarket(true);
+                return;
+            }
+            
+            const position = positions[currentPositionIndex];
+            const positionName = position.name;
+            // Mercado manual: no forzar cerrar/abrir automáticamente
+            // Rondas dinámicas: cantidad de jugadores + 1 (por posible salto)
+            const playersCount = Math.max(participants.length || 1, 1);
+            const rounds = playersCount + 1;
+            // fijar rounds en la estructura para que setRoundTitle y selección de jugadores coincidan
+            positions[currentPositionIndex].rounds = rounds;
+            currentRound = 0;
+            hasPurchasedInThisPosition = false;
+            winnersThisPosition = 0;
+            skipUsedThisPosition = false;
+            
+            // Obtener los jugadores para esta posición
+            const playerCategories = playersByPosition[positionName];
+            
+            if (!playerCategories) {
+                console.error(`No se encontraron jugadores para la posición: ${positionName}`);
+                currentPositionIndex++;
+                startNewPosition();
+                return;
+            }
+            
+            // Seleccionar jugadores para las rondas usando probabilidades por categoría (sin repetir)
+            const selectedPlayers = [];
+
+            // Recolectar todos los jugadores disponibles (sin repetir ya mostrados)
+            const allPlayers = [];
+            for (const category in playerCategories) {
+                if (Array.isArray(playerCategories[category]) && playerCategories[category].length > 0) {
+                    const unseen = playerCategories[category].filter(p => p && !shownPlayers.has(p.name) && photoExists(p.photo));
+                    allPlayers.push(...unseen);
+                    console.log(`Encontrados ${unseen.length} jugadores NO repetidos en la categoría ${category}`);
+                }
+            }
+
+            if (allPlayers.length === 0) {
+                console.error('No se encontraron jugadores en ninguna categoría para la posición:', positionName);
+                currentPositionIndex++;
+                startNewPosition();
+                return;
+            }
+
+            // Construir pesos dinámicos (PRIME raro, el resto parecido)
+            const weights = buildCategoryWeights(playerCategories);
+            console.log('Pesos de categorías:', weights);
+
+            // Para cada ronda, elegir una categoría según pesos y tomar 1 jugador aleatorio NO repetido
+            for (let i = 0; i < rounds; i++) {
+                let chosenCategory = weightedChoice(weights);
+                let pool = (chosenCategory && Array.isArray(playerCategories[chosenCategory])) ? playerCategories[chosenCategory] : [];
+
+                // Filtrar no vistos
+                let candidates = (pool || []).filter(p => p && !shownPlayers.has(p.name) && photoExists(p.photo));
+
+                if (!candidates || candidates.length === 0) {
+                    // Fallback: probar otra categoría con jugadores no vistos
+                    const available = Object.keys(playerCategories)
+                        .filter(k => Array.isArray(playerCategories[k]) && playerCategories[k].some(p => p && !shownPlayers.has(p.name)));
+                    if (available.length > 0) {
+                        chosenCategory = available[Math.floor(Math.random() * available.length)];
+                        candidates = playerCategories[chosenCategory].filter(p => p && !shownPlayers.has(p.name) && photoExists(p.photo));
+                    }
+                }
+
+                if (candidates && candidates.length > 0) {
+                    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+                    selectedPlayers.push(chosen);
+                    shownPlayers.add(chosen.name);
+                    console.log(`Ronda ${i + 1}: categoría ${chosenCategory} -> ${chosen.name}`);
+                }
+            }
+
+            // Si por algún motivo no alcanzamos 'rounds', completar desde allPlayers
+            if (selectedPlayers.length < rounds) {
+                const needed = rounds - selectedPlayers.length;
+                console.warn(`Solo se seleccionaron ${selectedPlayers.length} jugadores únicos, completando ${needed} más desde todas las categorías`);
+                // allPlayers ya contiene solo no vistos: úsalo y marca como vistos al añadir
+                for (let i = 0; i < needed; i++) {
+                    const candidates = allPlayers.filter(p => p && !shownPlayers.has(p.name) && photoExists(p.photo));
+                    if (candidates.length === 0) break;
+                    const extra = candidates[Math.floor(Math.random() * candidates.length)];
+                    selectedPlayers.push(extra);
+                    shownPlayers.add(extra.name);
+                }
+            }
+
+            console.log(`Jugadores seleccionados para ${positionName}:`, selectedPlayers.length);
+
+            if (selectedPlayers.length === 0) {
+                console.warn(`No se pudieron seleccionar jugadores para la posición: ${positionName}`);
+                currentPositionIndex++;
+                startNewPosition();
+                return;
+            }
+
+            // Mezclar por si hubiera más de una ronda
+            playersForCurrentPosition = [...selectedPlayers].sort(() => Math.random() - 0.5);
+            currentPlayerIndex = 0;
+            
+            // Actualizar la interfaz para mostrar la posición actual
+            setRoundTitle(positionName, 1, rounds);
+            
+            // Si soy host, sincronizo con la sala y renderizo
+            if (socket && isHost && roomCode) {
+                socket.emit('set_round', { code: roomCode, positionName, rounds });
+                const player = playersForCurrentPosition[currentPlayerIndex];
+                socket.emit('set_player', { code: roomCode, player, index: currentPlayerIndex + 1 });
+            }
+            // Render local del host o single-player
+            startNextPlayer();
+        }
+
+        // Función para precargar una imagen
+        function preloadImage(url) {
+            if (!url) return;
+            const img = new Image();
+            img.src = url;
+            return img;
+        }
+
+        // Función para mostrar el siguiente jugador de la posición actual
+        function startNextPlayer() {
+            // Si no hay jugadores para esta posición, pasar a la siguiente
+            if (!playersForCurrentPosition || currentPlayerIndex >= playersForCurrentPosition.length) {
+                currentRound++;
+                
+                // Si hemos completado todas las rondas para esta posición, pasar a la siguiente
+                if (currentRound >= positions[currentPositionIndex].rounds) {
+                    currentPositionIndex++;
+                    currentRound = 0;
+                }
+                
+                // Si hay más posiciones, cargar la siguiente
+                if (currentPositionIndex < positions.length) {
+                    startNewPosition();
+                } else {
+                    // Si no hay más posiciones, terminar el juego
+                    document.getElementById('game-container').classList.add('hidden');
+                    document.getElementById('end-game-message').classList.remove('hidden');
+                }
+                return;
+            }
+
+            const position = positions[currentPositionIndex];
+            const player = playersForCurrentPosition[currentPlayerIndex];
+            // Emitir al resto si soy el host
+            if (socket && isHost && roomCode) {
+                socket.emit('set_player', { code: roomCode, player, index: currentPlayerIndex + 1 });
+            }
+            
+            if (!player) {
+                console.error('No se pudo cargar el jugador actual');
+                currentPlayerIndex++;
+                startNextPlayer();
+                return;
+            }
+            
+            console.log('Mostrando jugador:', player.name, 'foto:', player.photo);
+            // Reset y actualizar UI de subasta para este jugador
+            currentBid = 0;
+            lastBidderId = null;
+            updateAuctionUI(player);
+            
+            setRoundTitle(position.name, currentPlayerIndex + 1, positions[currentPositionIndex].rounds);
+            const playerCard = document.getElementById('player-card');
+            playerCard.classList.remove('is-revealed'); // Reiniciar la tarjeta
+            // Controles: antes de revelar, solo Confirmar (si eres host), Siguiente oculto
+            const confirmBtnCtl = document.getElementById('confirm-button');
+            const nextBtnCtl = document.getElementById('next-round-button');
+            if (confirmBtnCtl) confirmBtnCtl.classList.toggle('hidden', !isHost);
+            if (nextBtnCtl) nextBtnCtl.classList.add('hidden');
+            
+            // Ocultar nombre y establecer el precio
+            document.getElementById('player-name').textContent = '';
+            document.getElementById('price-display').textContent = `$${player.price}M`;
+            document.getElementById('back-price-display').textContent = `$${player.price}M`;
+            
+            // Obtener referencia a la imagen del jugador
+            const playerPhoto = document.getElementById('player-photo');
+            
+            // Precargar la imagen primero
+            const img = new Image();
+            img.onload = function() {
+                // Actualizar la fuente de la imagen
+                playerPhoto.src = this.src;
+                
+                // Hacer visible la tarjeta primero
+                playerCard.style.transition = 'opacity 0.3s ease-in-out';
+                playerCard.style.opacity = '1';
+                
+                // Luego hacer visible el contenido con un pequeño retraso
+                setTimeout(() => {
+                    playerCard.querySelectorAll('*').forEach(el => {
+                        el.style.transition = 'opacity 0.3s ease-in-out';
+                        el.style.opacity = '1';
+                    });
+                }, 50);
+            };
+            img.onerror = function() {
+                // Usar imagen de respaldo si falla la carga
+                const fallback = 'Fotos/1.png';
+                playerPhoto.src = fallback;
+                
+                // Mostrar igualmente la tarjeta y su contenido
+                playerCard.style.transition = 'opacity 0.3s ease-in-out';
+                playerCard.style.opacity = '1';
+                setTimeout(() => {
+                    playerCard.querySelectorAll('*').forEach(el => {
+                        el.style.transition = 'opacity 0.3s ease-in-out';
+                        el.style.opacity = '1';
+                    });
+                }, 50);
+            };
+            
+            // Asegurar que la tarjeta sea visible inmediatamente
+            playerCard.style.display = 'block';
+            playerCard.style.opacity = '1';
+            playerCard.querySelectorAll('*').forEach(el => {
+                el.style.transition = 'opacity 0.2s ease-in-out';
+                el.style.opacity = '1';
+            });
+            
+            // Cargar la imagen después de configurar los estilos
+            const normalizedPlayerPhoto = normalizePhotoPath(player.photo);
+            img.src = normalizedPlayerPhoto;
+            
+            // Configurar la imagen del jugador (oscurecida como pista)
+            const clueImage = document.getElementById('player-clue-image');
+            const cluesTitle = document.getElementById('clues-title');
+            const cluesText = document.getElementById('player-clues');
+            
+            // Mostrar siempre la imagen del jugador (oscurecida)
+            // Si la imagen falla, onerror del preloader ya mostrará la tarjeta, y aquí
+            // podemos establecer una imagen de pista también con fallback
+            const fallbackClue = 'Fotos/1.png';
+            const normalizedCluePhoto = normalizePhotoPath(player.photo);
+            clueImage.src = normalizedCluePhoto;
+            clueImage.onerror = () => { clueImage.src = fallbackClue; };
+            clueImage.style.display = 'block';
+            cluesTitle.style.display = 'none';
+            cluesText.style.display = 'none';
+
+            // Fallback por si el onload del preloader no dispara (p. ej., caché)
+            setTimeout(() => {
+                if (playerCard && playerCard.style.opacity === '0') {
+                    playerCard.style.transition = 'opacity 0.3s ease-in-out';
+                    playerCard.style.opacity = '1';
+                    setTimeout(() => {
+                        playerCard.querySelectorAll('*').forEach(el => {
+                            el.style.transition = 'opacity 0.3s ease-in-out';
+                            el.style.opacity = '1';
+                        });
+                    }, 50);
+                }
+            }, 250);
+
+            // Actualizar el botón de selección para manejar centrales (si existe)
+            const selectButton = document.getElementById('select-player');
+            if (selectButton) {
+                if (position.name.includes('Central')) {
+                    // Verificar si ya hay 2 centrales seleccionados
+                    if (selectedCentrals.length >= 2) {
+                        selectButton.disabled = true;
+                        selectButton.textContent = 'Máximo de centrales alcanzado';
+                        selectButton.classList.add('opacity-50', 'cursor-not-allowed');
+                    } else {
+                        selectButton.disabled = false;
+                        selectButton.textContent = 'Seleccionar Central';
+                        selectButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                    }
+                } else {
+                    selectButton.textContent = 'Seleccionar Jugador';
+                    selectButton.disabled = false;
+                    selectButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+            }
+        }
+
+        // Función para mezclar los jugadores legendarios y trolls
+        function mixSpecialPlayers() {
+            const positions = Object.keys(playersByPosition);
+            positions.forEach(pos => {
+                const levels = Object.keys(playersByPosition[pos]);
+                levels.forEach(level => {
+                    playersByPosition[pos][level].sort(() => Math.random() - 0.5);
+                });
+            });
+        }
+
+        // Función para revelar el jugador actual
+        function revealPlayer() {
+            const player = playersForCurrentPosition[currentPlayerIndex];
+            const playerCard = document.getElementById('player-card');
+            
+            // Mostrar nombre y foto del jugador
+            document.getElementById('player-name').textContent = player.name;
+            const playerPhoto = document.getElementById('player-photo');
+            const backFallback = 'Fotos/1.png';
+            const normalizedBack = normalizePhotoPath(player.photo);
+            playerPhoto.onerror = () => { playerPhoto.src = backFallback; };
+            playerPhoto.src = normalizedBack;
+            
+            // Mostrar el precio real (sin falso)
+            const priceDisplay = document.getElementById('price-display');
+            const backPriceDisplay = document.getElementById('back-price-display');
+            
+            priceDisplay.textContent = `$${player.price}M`;
+            backPriceDisplay.textContent = `$${player.price}M`;
+            
+            // Mostrar pistas si existen
+            const cluesText = document.getElementById('player-clues');
+            if (player.clues) {
+                cluesText.textContent = player.clues;
+                cluesText.style.display = 'block';
+            } else {
+                cluesText.style.display = 'none';
+            }
+            
+            // Cambiar el estado de los botones
+            const confirmBtn = document.getElementById('confirm-button');
+            const nextBtn = document.getElementById('next-round-button');
+            if (confirmBtn) confirmBtn.classList.add('hidden');
+            if (nextBtn) nextBtn.classList.toggle('hidden', !isHost);
+            
+            // Girar la tarjeta
+            playerCard.classList.add('is-revealed');
+        }
+        // Revelar usando un payload de jugador concreto (para sincronización desde servidor)
+        function revealSpecificPlayer(payloadPlayer) {
+            if (!payloadPlayer) return;
+            const playerCard = document.getElementById('player-card');
+            try {
+                // Nombre y foto
+                const nameEl = document.getElementById('player-name');
+                if (nameEl) nameEl.textContent = payloadPlayer.name || '';
+                const playerPhoto = document.getElementById('player-photo');
+                const backFallback = 'Fotos/1.png';
+                const normalizedBack = normalizePhotoPath(payloadPlayer.photo || '');
+                if (playerPhoto) {
+                    playerPhoto.onerror = () => { playerPhoto.src = backFallback; };
+                    playerPhoto.src = normalizedBack;
+                }
+                // Precio
+                const priceDisplay = document.getElementById('price-display');
+                const backPriceDisplay = document.getElementById('back-price-display');
+                const priceText = `$${(payloadPlayer.price||0)}M`;
+                if (priceDisplay) priceDisplay.textContent = priceText;
+                if (backPriceDisplay) backPriceDisplay.textContent = priceText;
+                // Pistas (si llegan en payload)
+                const cluesText = document.getElementById('player-clues');
+                if (cluesText) {
+                    if (payloadPlayer.clues) {
+                        cluesText.textContent = payloadPlayer.clues;
+                        cluesText.style.display = 'block';
+                    } else {
+                        cluesText.style.display = 'none';
+                    }
+                }
+                // Botones
+                const confirmBtn = document.getElementById('confirm-button');
+                const nextBtn = document.getElementById('next-round-button');
+                if (confirmBtn) confirmBtn.classList.add('hidden');
+                if (nextBtn) nextBtn.classList.toggle('hidden', !isHost);
+                // Flip
+                if (playerCard) playerCard.classList.add('is-revealed');
+            } catch (e) {
+                console.warn('revealSpecificPlayer error', e);
+            }
+        }
+        
+        // Función para avanzar al siguiente jugador
+        function nextPlayer() {
+            if (isAdvancing) return; // debounce to prevent skipping multiple players
+            isAdvancing = true;
+            const playerCard = document.getElementById('player-card');
+            const playerPhoto = document.getElementById('player-photo');
+            const nextBtn = document.getElementById('next-round-button');
+            if (nextBtn) nextBtn.disabled = true;
+            
+            // Ocultar el contenido de la tarjeta con transición
+            playerCard.querySelectorAll('*').forEach(el => {
+                el.style.transition = 'opacity 0.3s ease-in-out';
+                el.style.opacity = '0';
+            });
+            
+            // Esperar a que termine la animación de desvanecimiento
+            setTimeout(() => {
+                // Cambiar el estado de los botones
+                const confirmBtn = document.getElementById('confirm-button');
+                const nextBtn = document.getElementById('next-round-button');
+                if (nextBtn) nextBtn.classList.add('hidden');
+                if (confirmBtn) confirmBtn.classList.toggle('hidden', !isHost);
+                
+                // Pasar al siguiente jugador
+                currentPlayerIndex++;
+                
+                // Verificar si hemos llegado al final de los jugadores
+                if (currentPlayerIndex >= playersForCurrentPosition.length) {
+                    // Posición completada
+                    try {
+                        const completed = positions[currentPositionIndex]?.name;
+                        if (completed) onPositionCompleted(completed);
+                    } catch(_) {}
+                    currentPositionIndex++;
+                    currentPlayerIndex = 0;
+                    // Limpiar estado de jugadores de la posición anterior
+                    playersForCurrentPosition = [];
+                    // Reset visual de la tarjeta para la próxima posición
+                    try { playerCard.classList.remove('is-revealed'); } catch(_) {}
+                    try { playerCard.style.opacity = '0'; } catch(_) {}
+                    startNewPosition();
+                } else {
+                    // Restaurar la opacidad y cambiar al siguiente jugador
+                    playerCard.classList.remove('is-revealed');
+                    startNextPlayer();
+                }
+                
+                // Pequeña pausa para asegurar la transición
+                setTimeout(() => {
+                    playerCard.style.transition = 'opacity 0.3s ease-in-out';
+                    if (nextBtn) nextBtn.disabled = false;
+                    isAdvancing = false;
+                }, 50);
+            }, 200); // Tiempo de espera para la animación de desvanecimiento
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            sanitizePlayers();
+            mixSpecialPlayers();
+            loadPhotoManifest().then(() => {
+                console.log('Photo manifest loaded, files:', photoManifest.size);
+            }).catch(() => {
+                console.warn('Photo manifest not available, proceeding without filtering');
+            });
+            // Inicializar conexión Socket.IO
+            if (typeof io !== 'undefined') {
+                socket = io();
+                // Actualizar el id del usuario al conectar
+                socket.on('connect', () => {
+                    currentUser.id = socket.id;
+                });
+                // Eventos de sala
+                socket.on('room_created', ({ code, participants: list }) => {
+                    isHost = true;
+                    roomCode = code;
+                    inGame = false;
+                    participants = list || [];
+                    updateOnlineUI();
+                    renderParticipants();
+                    renderTeamViewersBar();
+                });
+                socket.on('room_joined', ({ code, participants: list }) => {
+                    isHost = false;
+                    roomCode = code;
+                    inGame = false;
+                    participants = list || [];
+                    updateOnlineUI();
+                    renderParticipants();
+                });
+                socket.on('room_error', ({ message }) => {
+                    const input = document.getElementById('join-code');
+                    const avErr = document.getElementById('avatar-error');
+                    if (message && message.toLowerCase().includes('avatar')) {
+                        if (avErr) { avErr.textContent = message; avErr.classList.remove('hidden'); }
+                        return;
+                    }
+                    if (input) {
+                        input.classList.add('ring-2','ring-red-500');
+                        setTimeout(() => input.classList.remove('ring-2','ring-red-500'), 1500);
+                        // Mantener el código escrito; solo mostrar feedback visual
+                        if (message) input.setAttribute('title', message);
+                    }
+                });
+                socket.on('participants_update', ({ code, participants: list }) => {
+                    if (code !== roomCode) return;
+                    participants = list || [];
+                    renderParticipants();
+                    renderTeamViewersBar();
+                    // Refrescar opciones de avatar según ocupados
+                    renderAvatarChoices();
+                    const avErr = document.getElementById('avatar-error');
+                    if (avErr) avErr.classList.add('hidden');
+                });
+                socket.on('host_changed', ({ code, hostId }) => {
+                    if (code !== roomCode) return;
+                    isHost = (hostId === socket.id);
+                    updateOnlineUI();
+                });
+                socket.on('game_started', ({ code }) => {
+                    if (code !== roomCode) return;
+                    // Mostrar escenario de juego
+                    inGame = true;
+                    updateOnlineUI();
+                    // Mercado inicia cerrado visualmente
+                    setTransferMarket(false);
+                    // Reiniciar estado de la partida y comenzar
+                    currentPositionIndex = 0;
+                    currentPlayerIndex = 0;
+                    currentRound = 0;
+                    playersForCurrentPosition = [];
+                    shownPlayers = new Set();
+                    selectedCentrals = [];
+                    hasPurchasedInThisPosition = false;
+                    lastBidderId = null;
+                    winnersThisPosition = 0;
+                    skipUsedThisPosition = false;
+                    // Reset de visualización de equipos
+                    viewingUserId = null;
+                    ensureTeamMap(currentUser.id);
+                    formationSlots.forEach(s => { team[s.key] = null; teamsMap[currentUser.id][s.key] = null; });
+                    renderTeamViewersBar();
+                    // El host conduce la partida; invitados esperan eventos
+                    if (isHost) {
+                        startNewPosition();
+                    }
+                });
+                // Ronda/posición definida por el host
+                socket.on('round_set', ({ positionName, rounds }) => {
+                    if (isHost) return; // el host ya maneja su propio flujo local
+                    // Prepara UI local para la posición
+                    const total = Number(rounds) || 0;
+                    serverPositionName = positionName || '';
+                    serverRounds = total;
+                    guestRoundIndex = total > 0 ? 1 : 0;
+                    positions[currentPositionIndex] && (positions[currentPositionIndex].rounds = total);
+                    setRoundTitle(serverPositionName, guestRoundIndex || 1, total);
+                    hasPurchasedInThisPosition = false;
+                });
+                // Jugador definido por el host
+                socket.on('player_set', ({ player, index, totalRounds, positionName }) => {
+                    if (isHost) return; // el host no procesa eco
+                    // Renderizar el jugador actual recibido del servidor
+                    playersForCurrentPosition = [player];
+                    currentPlayerIndex = 0;
+                    lastBidderId = null;
+                    currentBid = 0;
+                    // Progreso: usar índice y total enviados por el servidor
+                    if (typeof totalRounds === 'number' && totalRounds > 0) serverRounds = totalRounds;
+                    if (typeof index === 'number' && index > 0) guestRoundIndex = Math.min(serverRounds || index, index);
+                    if (positionName) serverPositionName = positionName;
+                    const shownIndex = Math.max(1, guestRoundIndex || 1);
+                    const total = serverRounds || positions[currentPositionIndex]?.rounds || 1;
+                    setRoundTitle(serverPositionName || positions[currentPositionIndex]?.name || '', shownIndex, total);
+                    // Preparar tarjeta
+                    renderServerPlayer();
+                });
+                // Actualización de puja
+                socket.on('bid_update', ({ currentBid: bid, bidderId }) => {
+                    currentBid = Number(bid) || 0;
+                    lastBidderId = bidderId || null;
+                    const player = playersForCurrentPosition[currentPlayerIndex];
+                    updateAuctionUI(player);
+                });
+                // Presupuestos
+                socket.on('budget_update', ({ budgets }) => {
+                    if (!budgets) return;
+                    budgetsMap = budgets;
+                    const mine = budgets[currentUser.id];
+                    if (typeof mine === 'number') {
+                        userBudget = mine;
+                        const player = playersForCurrentPosition[currentPlayerIndex];
+                        updateAuctionUI(player);
+                        // actualizar header de equipo con presupuesto
+                        updateTeamUI();
+                    }
+                });
+                // Ganador confirmado por el host
+                socket.on('winner_confirmed', ({ winnerId, price, player, positionName }) => {
+                    const msg = document.getElementById('auction-msg');
+                    if (winnerId === currentUser.id) {
+                        // Marcar compra localmente
+                        hasPurchasedInThisPosition = true;
+                        registerPurchase(positionName, player, price);
+                        msg && (msg.textContent = `¡Ganaste a ${player.name} por $${price}M!`);
+                    } else {
+                        msg && (msg.textContent = `${player.name} adjudicado por $${price}M`);
+                        // Registrar compra en el mapa de equipos del ganador remoto
+                        ensureTeamMap(winnerId);
+                        teamsMap[winnerId][positionName] = { name: player.name, price: price, photo: player.photo };
+                        // Si estamos viendo a ese usuario, refrescar UI
+                        if (viewingUserId === winnerId) updateTeamUI();
+                    }
+                    // Mantener la revelación en pantalla para todos
+                    revealPlayer();
+                });
+                // Revelación manual (salto): sincronizar con todos, usando payload si viene
+                socket.on('player_revealed', ({ player: payloadPlayer } = {}) => {
+                    if (payloadPlayer) revealSpecificPlayer(payloadPlayer); else revealPlayer();
+                });
+
+                // Mercado: sincronización
+                socket.on('market_state', ({ open, reason }) => {
+                    console.log('[client] market_state', { open, reason });
+                    setTransferMarket(!!open);
+                    // Si se abre el mercado y aún estamos en lobby, mostrar escenario de juego
+                    if (open && !inGame) {
+                        inGame = true;
+                        updateOnlineUI();
+                    }
+                    renderOfferCTA();
+                });
+                // Click en pill (solo host y en juego)
+                const pill = document.getElementById('transfer-market-pill');
+                if (pill) {
+                    pill.addEventListener('click', () => {
+                        if (!isHost || !socket || !roomCode) return;
+                        const nextState = !transferMarketOpen;
+                        // Optimistic update for host
+                        setTransferMarket(nextState);
+                        socket.emit('market_state', { code: roomCode, open: nextState, reason: 'manual' });
+                    });
+                }
+
+                // Ofertas del mercado (recepción)
+                socket.on('transfer_offer', (offer) => {
+                    console.log('[client] transfer_offer received', offer);
+                    if (!offer) return;
+                    // Solo el destinatario ve el modal de acciones
+                    if (offer.to === currentUser.id) {
+                        showOfferReceivedModal(offer);
+                    } else if (offer.from === currentUser.id) {
+                        // Feedback simple al emisor
+                        const msg = document.getElementById('auction-msg');
+                        msg && (msg.textContent = 'Oferta enviada. Esperando respuesta...');
+                        setTimeout(() => { if (msg && msg.textContent.includes('Oferta enviada')) msg.textContent = ''; }, 2000);
+                    }
+                });
+                socket.on('transfer_offer_update', (offer) => {
+                    console.log('[client] transfer_offer_update received', offer);
+                    updateOfferModal(offer);
+                });
+                // Sincronización de equipos (tras compras o intercambios)
+                socket.on('teams_update', ({ users }) => {
+                    if (!users) return;
+                    Object.entries(users).forEach(([uid, teamObj]) => {
+                        ensureTeamMap(uid);
+                        // Reemplazar por el estado exacto del servidor
+                        teamsMap[uid] = { ...teamObj };
+                        // Si es mi propio equipo, sincronizar objeto local 'team'
+                        if (uid === currentUser.id) {
+                            // Vaciar y copiar propiedades para mantener referencia si hay bindings
+                            Object.keys(team).forEach(k => { delete team[k]; });
+                            Object.entries(teamObj || {}).forEach(([k,v]) => { team[k] = v; });
+                        }
+                    });
+                    updateTeamUI();
+                });
+            }
+            // Lobby / Online controls
+            const createBtn = document.getElementById('create-room');
+            const joinBtn = document.getElementById('join-room');
+            const startBtn = document.getElementById('start-game');
+            const nameInput = document.getElementById('display-name');
+            const avatarWrap = document.getElementById('avatar-choices');
+            const avatarPreview = document.getElementById('avatar-preview');
+            if (createBtn) createBtn.addEventListener('click', createRoom);
+            if (joinBtn) joinBtn.addEventListener('click', joinRoom);
+            if (startBtn) startBtn.addEventListener('click', startGame);
+            // Render dinámico de avatares con estados (seleccionado / usado / disponible)
+            function renderAvatarChoices() {
+                if (!avatarWrap) return;
+                avatarPreview && (avatarPreview.src = currentUser.avatar);
+                const usedAvatars = new Set((participants || []).map(p => p.avatar).filter(Boolean));
+                avatarWrap.innerHTML = presetAvatars.map((src, idx) => {
+                    const isSelected = src === currentUser.avatar;
+                    const isUsed = usedAvatars.has(src) && !isSelected; // permitir mantener el propio si ya estás dentro
+                    const borderCls = isSelected ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-gray-700';
+                    const stateCls = isUsed ? 'opacity-40 cursor-not-allowed' : 'hover:border-emerald-400 hover:opacity-100';
+                    return `
+                        <button type="button" data-src="${src}" class="avatar-option border ${borderCls} ${stateCls} rounded-full p-0.5 transition-all">
+                            <img src="${src}" alt="avatar-${idx}" class="w-10 h-10 rounded-full object-cover bg-black/30"/>
+                        </button>
+                    `;
+                }).join('');
+                avatarWrap.querySelectorAll('.avatar-option').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const src = btn.getAttribute('data-src');
+                        if (!src) return;
+                        // No permitir seleccionar un avatar ya usado por otro en la sala
+                        const usedAvatars = new Set((participants || []).map(p => p.avatar).filter(Boolean));
+                        if (usedAvatars.has(src) && src !== currentUser.avatar) return;
+                        currentUser.avatar = src;
+                        if (avatarPreview) avatarPreview.src = src;
+                        // Refrescar bordes de selección
+                        renderAvatarChoices();
+                    });
+                });
+            }
+            renderAvatarChoices();
+            // Nombre visible
+            if (nameInput) {
+                nameInput.value = currentUser.name;
+                nameInput.addEventListener('input', () => {
+                    currentUser.name = nameInput.value || 'Jugador';
+                });
+            }
+            updateOnlineUI(); // arranca en lobby
+            // Mercado en rojo por defecto al cargar
+            setTransferMarket(false);
+            renderParticipants();
+            renderTeamViewersBar();
+            // Host-only confirmar
+            const confirmBtn = document.getElementById('confirm-button');
+            if (confirmBtn) confirmBtn.addEventListener('click', () => {
+                if (!isHost || !socket || !roomCode) return;
+                const msg = document.getElementById('auction-msg');
+                const player = playersForCurrentPosition[currentPlayerIndex];
+                const min = player.price;
+                if (currentBid <= 0) {
+                    // Enforce solo 1 salto por posición
+                    if (skipUsedThisPosition) { msg && (msg.textContent = 'El salto ya se usó en esta posición.'); return; }
+                    skipUsedThisPosition = true;
+                    // Revelar para todos
+                    revealPlayer();
+                    socket.emit('player_revealed', { code: roomCode });
+                    msg && (msg.textContent = 'Sin pujas: jugador descartado. Pulsa "Siguiente Jugador" para continuar.');
+                    return;
+                }
+                if (currentBid < min) { msg && (msg.textContent = `La puja debe ser al menos ${formatM(min)}.`); return; }
+                // Confirmación vía servidor
+                // Deshabilitar el botón para evitar spam hasta recibir confirmación
+                confirmBtn.disabled = true;
+                socket.emit('confirm_winner', { code: roomCode });
+                // Se reactivará implícitamente al mostrar Next; si hubiera error, reactivamos tras breve tiempo
+                setTimeout(() => { confirmBtn.disabled = false; }, 1200);
+            });
+            document.getElementById('next-round-button').addEventListener('click', nextPlayer);
+            // Listeners subasta
+            const buyBtn = document.getElementById('buy-button');
+            if (buyBtn) buyBtn.addEventListener('click', placeBid);
+            const minusBtn = document.getElementById('minus5');
+            const plusBtn = document.getElementById('plus5');
+            const input = document.getElementById('bid-input');
+            function clampAndSync(delta) {
+                if (!playersForCurrentPosition || !playersForCurrentPosition[currentPlayerIndex]) return;
+                const player = playersForCurrentPosition[currentPlayerIndex];
+                const min = player.price || 0;
+                const max = userBudget;
+                // Siempre partir del mínimo permitido del momento
+                const minAllowed = (currentBid > 0 ? currentBid + 5 : min);
+                let v = parseInt(input && input.value ? input.value : String(minAllowed), 10);
+                if (!Number.isFinite(v)) v = min;
+                v += delta;
+                if (v % 5 !== 0) v = Math.round(v / 5) * 5; // mantener múltiplos de 5
+                v = Math.max(minAllowed, Math.min(max, v));
+                input.value = String(v);
+            }
+            if (minusBtn) minusBtn.addEventListener('click', () => clampAndSync(-5));
+            if (plusBtn) plusBtn.addEventListener('click', () => clampAndSync(+5));
+            // Bloquear selección, arrastre y menú contextual en imágenes
+            const frontContainer = document.getElementById('player-image-container-front');
+            const backContainer = document.getElementById('player-image-container-back');
+            [frontContainer, backContainer].forEach(el => {
+                if (!el) return;
+                el.addEventListener('contextmenu', (e) => e.preventDefault());
+                el.addEventListener('mousedown', (e) => e.preventDefault());
+            });
+            const clueImg = document.getElementById('player-clue-image');
+            const photoImg = document.getElementById('player-photo');
+            [clueImg, photoImg].forEach(img => {
+                if (!img) return;
+                img.setAttribute('draggable', 'false');
+                img.addEventListener('dragstart', (e) => e.preventDefault());
+                img.addEventListener('contextmenu', (e) => e.preventDefault());
+                img.addEventListener('mousedown', (e) => e.preventDefault());
+            });
+            updateTeamUI();
+            // No iniciar partidas automáticamente; se inicia desde lobby
+        });
+    </script>
+    <!-- Modal de Ofertas (Mercado de Fichajes) -->
+    <div id="offer-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
+        <div class="absolute inset-0 bg-black/60"></div>
+        <div class="relative bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-2xl mx-4 text-white max-h-[85vh] overflow-y-auto">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-bold">Crear oferta</h3>
+                <button id="offer-close" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Cerrar</button>
+            </div>
+            <div class="text-sm text-gray-300 mb-3">Selecciona jugadores del rival y empareja con tus jugadores de la misma zona. Agrega dinero si quieres.</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
+                    <div class="font-semibold mb-2">Jugadores del rival</div>
+                    <div id="offer-opponent-list" class="space-y-2"></div>
+                </div>
+                <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
+                    <div class="font-semibold mb-2">Tus jugadores (según zona)</div>
+                    <div id="offer-mine-list" class="space-y-2"></div>
+                </div>
+            </div>
+            <!-- Carrito de intercambios -->
+            <div class="mt-4 bg-gray-800/50 rounded-xl p-3 border border-gray-700">
+                <div class="font-semibold mb-2">Carrito de intercambios</div>
+                <div id="offer-cart" class="space-y-2"></div>
+            </div>
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
+                    <div class="font-semibold mb-2">Dinero que ofreces</div>
+                    <input id="offer-cash-mine" type="number" min="0" step="5" value="0" class="w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+                <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
+                    <div class="font-semibold mb-2">Dinero que pides</div>
+                    <input id="offer-cash-theirs" type="number" min="0" step="5" value="0" class="w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+            </div>
+            <div id="offer-summary" class="mt-4 text-sm text-gray-300"></div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+                <button id="offer-cancel" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">Cancelar</button>
+                <button id="offer-send" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 font-bold">Enviar oferta</button>
+            </div>
+        </div>
+    </div>
+    <!-- Modal de Oferta Recibida -->
+    <div id="offer-received-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
+        <div class="absolute inset-0 bg-black/60"></div>
+        <div class="relative bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-2xl mx-4 text-white max-h-[85vh] overflow-y-auto">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-bold">Oferta de intercambio recibida</h3>
+                <button id="offer-received-close" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Cerrar</button>
+            </div>
+            <div id="offer-received-content" class="text-sm text-gray-200"></div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+                <button id="offer-reject" class="px-4 py-2 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-white">Rechazar</button>
+                <button id="offer-counter" class="px-4 py-2 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-white">Contraofertar</button>
+                <button id="offer-accept" class="px-4 py-2 rounded-lg border border-emerald-600 text-emerald-300 hover:bg-emerald-900/30 font-semibold">Aceptar</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        // ===== Lógica del Modal de Ofertas =====
+        function groupForPosition(posKey) {
+            if (!posKey) return 'other';
+            if (posKey === 'Portero') return 'gk';
+            if (['Lateral Izquierdo','Central Izquierdo','Central Derecho','Lateral Derecho'].includes(posKey)) return 'def';
+            if (['Mediocentro Defensivo','Mediocentro','Mediocentro Ofensivo'].includes(posKey)) return 'mid';
+            if (['Extremo Izquierdo','Delantero Centro','Extremo Derecho'].includes(posKey)) return 'att';
+            return 'other';
+        }
+
+        let offerState = { targetUserId: null, pairs: [], cashMine: 0, cashTheirs: 0 };
+
+        function openOfferModal() {
+            if (!transferMarketOpen || !viewingUserId || viewingUserId === currentUser.id) return;
+            offerState = { targetUserId: viewingUserId, pairs: [], cashMine: 0, cashTheirs: 0 };
+            const modal = document.getElementById('offer-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            // Render lists
+            renderOfferLists();
+            attachOfferModalListeners();
+            renderOfferCart();
+            refreshOfferSummary();
+        }
+
+        function attachOfferModalListeners() {
+            const close = document.getElementById('offer-close');
+            const cancel = document.getElementById('offer-cancel');
+            const send = document.getElementById('offer-send');
+            const cashMine = document.getElementById('offer-cash-mine');
+            const cashTheirs = document.getElementById('offer-cash-theirs');
+            close.onclick = closeOfferModal;
+            cancel.onclick = closeOfferModal;
+            send.onclick = sendOffer;
+            // Limitar por presupuesto propio
+            cashMine.setAttribute('max', String(Math.max(0, userBudget)));
+            cashMine.oninput = () => {
+                let v = Math.max(0, Number(cashMine.value) || 0);
+                if (v > userBudget) v = userBudget;
+                // mantener múltiplos de 5
+                if (v % 5 !== 0) v = Math.round(v / 5) * 5;
+                offerState.cashMine = v;
+                cashMine.value = String(v);
+                refreshOfferSummary();
+            };
+            cashTheirs.oninput = () => { offerState.cashTheirs = Math.max(0, Number(cashTheirs.value)||0); refreshOfferSummary(); };
+        }
+
+        function renderOfferLists() {
+            const oppList = document.getElementById('offer-opponent-list');
+            const mineList = document.getElementById('offer-mine-list');
+            const oppTeam = teamsMap[offerState.targetUserId] || {};
+            // Rival: botones toggle (seleccionar múltiples). Marcar activos si ya están en pares
+            oppList.innerHTML = Object.entries(oppTeam).filter(([k,v]) => !!v).map(([slot, data]) => {
+                const g = groupForPosition(slot);
+                const active = offerState.pairs.some(p => p.opponentSlot === slot);
+                return `<button class="w-full flex items-center gap-3 p-2 rounded-lg ${active?'bg-gray-800 border-emerald-600':'bg-gray-900/40'} border ${active?'':'border-gray-800'} hover:bg-gray-800" data-slot="${slot}" data-group="${g}">
+                    <div class="team-slot__photo" style="width:36px;height:36px;border-radius:8px;overflow:hidden;">
+                        <img src="${data.photo}" alt="${data.name}" style="width:100%;height:100%;object-fit:contain;"/>
+                    </div>
+                    <div class="flex-1 text-left">
+                        <div class="text-white text-sm font-semibold">${data.name}</div>
+                        <div class="text-xs text-gray-400">${slot}</div>
+                    </div>
+                    <div class="text-xs ${active?'text-emerald-400':'text-gray-400'}">${active?'Seleccionado':'Agregar'}</div>
+                </button>`;
+            }).join('');
+            // Siempre mostrar tus jugadores con foto; si no hay selección del rival, indicar que selecciones primero
+            const myTeam = teamsMap[currentUser.id] || team;
+            const anySelected = offerState.pairs.length > 0;
+            const myCards = Object.entries(myTeam).filter(([k,v]) => !!v).map(([slot, data]) => {
+                return `<div class="flex items-center gap-3 p-2 rounded-lg ${anySelected?'bg-gray-900/40 hover:bg-gray-800':'bg-gray-900/20'} border border-gray-800 opacity-${anySelected? '100':'60'}">
+                    <div class="team-slot__photo" style="width:36px;height:36px;border-radius:8px;overflow:hidden;">
+                        <img src="${data.photo}" alt="${data.name}" style="width:100%;height:100%;object-fit:contain;"/>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-white text-sm font-semibold truncate">${data.name}</div>
+                        <div class="text-xs text-gray-400">${slot}</div>
+                    </div>
+                </div>`;
+            }).join('');
+            mineList.innerHTML = `${!anySelected ? '<div class="text-gray-400 text-xs mb-2">Selecciona jugadores del rival para elegir a cuál de tus jugadores ofreces a cambio.</div>' : ''}
+                <div class="space-y-2">${myCards || '<div class="text-gray-400 text-sm">No tienes jugadores en tu equipo aún.</div>'}</div>`;
+            oppList.querySelectorAll('button').forEach(btn => {
+                btn.onclick = () => {
+                    const slot = btn.getAttribute('data-slot');
+                    const group = btn.getAttribute('data-group');
+                    // toggle
+                    const idx = offerState.pairs.findIndex(p => p.opponentSlot === slot);
+                    if (idx >= 0) {
+                        offerState.pairs.splice(idx,1);
+                    } else {
+                        offerState.pairs.push({ opponentSlot: slot, mySlot: null, group });
+                    }
+                    renderOfferLists();
+                    renderOfferCart();
+                    refreshOfferSummary();
+                };
+            });
+        }
+
+        function renderOfferCart() {
+            const cart = document.getElementById('offer-cart');
+            const oppTeam = teamsMap[offerState.targetUserId] || {};
+            const myTeam = teamsMap[currentUser.id] || team;
+            if (!offerState.pairs.length) {
+                cart.innerHTML = '<div class="text-gray-400 text-sm">No hay intercambios seleccionados.</div>';
+                return;
+            }
+            cart.innerHTML = offerState.pairs.map((p, idx) => {
+                const opp = oppTeam[p.opponentSlot];
+                const options = Object.entries(myTeam).filter(([k,v]) => !!v && groupForPosition(k) === p.group);
+                const optionsHtml = ['<option value="">— Selecciona tu jugador —</option>'].concat(options.map(([slot, data]) => `<option value="${slot}" ${p.mySlot===slot?'selected':''}>${data.name} (${slot})</option>`)).join('');
+                return `
+                <div class="flex items-center gap-3 p-2 rounded-lg bg-gray-900/40 border border-gray-800">
+                    <div class="team-slot__photo" style="width:36px;height:36px;border-radius:8px;overflow:hidden;">
+                        <img src="${opp?.photo||''}" alt="${opp?.name||''}" style="width:100%;height:100%;object-fit:contain;"/>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-white text-sm font-semibold truncate">${opp?.name||'?'} <span class="text-gray-400">(${p.opponentSlot})</span></div>
+                        <select data-index="${idx}" class="mt-1 w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-2 py-1 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">${optionsHtml}</select>
+                    </div>
+                    <button data-remove="${idx}" class="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs">Quitar</button>
+                </div>`;
+            }).join('');
+            cart.querySelectorAll('select').forEach(sel => {
+                sel.onchange = () => {
+                    const i = Number(sel.getAttribute('data-index'));
+                    const val = sel.value;
+                    if (offerState.pairs[i]) offerState.pairs[i].mySlot = val || null;
+                    refreshOfferSummary();
+                };
+            });
+            cart.querySelectorAll('button[data-remove]').forEach(btn => {
+                btn.onclick = () => {
+                    const i = Number(btn.getAttribute('data-remove'));
+                    offerState.pairs.splice(i,1);
+                    renderOfferLists();
+                    renderOfferCart();
+                    refreshOfferSummary();
+                };
+            });
+        }
+
+        function refreshOfferSummary() {
+            const sum = document.getElementById('offer-summary');
+            const oppTeam = teamsMap[offerState.targetUserId] || {};
+            const myTeam = teamsMap[currentUser.id] || team;
+            const lines = offerState.pairs.map(p => {
+                const a = oppTeam[p.opponentSlot];
+                const b = myTeam[p.mySlot];
+                const left = a ? `${a.name} (${p.opponentSlot})` : '—';
+                const right = b ? `${b.name} (${p.mySlot||'?'})` : '—';
+                return `• ${left} ⇄ ${right}`;
+            });
+            lines.push(`• Dinero que ofreces: ${formatM(offerState.cashMine||0)}`);
+            lines.push(`• Dinero que pides: ${formatM(offerState.cashTheirs||0)}`);
+            sum.innerHTML = `<div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">${lines.map(l => `<div>${l}</div>`).join('')}</div>`;
+        }
+
+        function closeOfferModal() {
+            const modal = document.getElementById('offer-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function sendOffer() {
+            if (!socket || !roomCode) { closeOfferModal(); return; }
+            // Validar pares
+            const validPairs = offerState.pairs.filter(p => p.opponentSlot && p.mySlot);
+            if (validPairs.length === 0) { alert('Agrega al menos un intercambio válido.'); return; }
+            // Validar efectivo contra tu presupuesto
+            const cashMine = Math.max(0, Number(offerState.cashMine)||0);
+            if (cashMine > userBudget) { alert('No puedes ofrecer más dinero del que tienes.'); return; }
+            const payload = {
+                code: roomCode,
+                from: currentUser.id,
+                to: offerState.targetUserId,
+                pairs: validPairs, // [{opponentSlot, mySlot, group}]
+                cashMine,
+                cashTheirs: Math.max(0, Number(offerState.cashTheirs)||0),
+                timestamp: Date.now()
+            };
+            socket.emit('transfer_offer', payload);
+            closeOfferModal();
+        }
+
+        // ===== Recepción de ofertas =====
+        function showOfferReceivedModal(offer) {
+            const modal = document.getElementById('offer-received-modal');
+            const content = document.getElementById('offer-received-content');
+            const oppTeam = teamsMap[offer.from] || {};
+            const myTeam = teamsMap[offer.to] || team;
+            const userFrom = participants.find(p => p.id === offer.from);
+            const userTo = participants.find(p => p.id === offer.to);
+            const lines = [];
+            lines.push(`<div class='mb-2'><span class='text-gray-400'>De:</span> <span class='font-bold'>${userFrom?.name||offer.from}</span> <span class='text-gray-400'>Para:</span> <span class='font-bold'>${userTo?.name||offer.to}</span></div>`);
+            offer.pairs.forEach(p => {
+                const a = myTeam[p.opponentSlot] || {}; // para el receptor, opponentSlot es suyo
+                const b = oppTeam[p.mySlot] || {}; // del oferente
+                lines.push(`<div>• ${a.name||'?'} (${p.opponentSlot}) ⇄ ${b.name||'?'} (${p.mySlot})</div>`);
+            });
+            lines.push(`<div class='mt-2'>• Dinero que te ofrecen: ${formatM(offer.cashMine||0)}</div>`);
+            lines.push(`<div>• Dinero que te piden: ${formatM(offer.cashTheirs||0)}</div>`);
+            content.innerHTML = lines.join('');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            // Botones
+            document.getElementById('offer-received-close').onclick = () => closeOfferReceivedModal();
+            document.getElementById('offer-reject').onclick = () => respondOffer(offer, 'reject');
+            document.getElementById('offer-accept').onclick = () => respondOffer(offer, 'accept');
+            document.getElementById('offer-counter').onclick = () => counterOffer(offer);
+        }
+        function closeOfferReceivedModal() {
+            const modal = document.getElementById('offer-received-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+        function respondOffer(offer, action) {
+            if (!socket) { closeOfferReceivedModal(); return; }
+            socket.emit('transfer_offer_update', { code: roomCode, action, offer });
+            closeOfferReceivedModal();
+        }
+        function counterOffer(offer) {
+            // Abrir modal de crear oferta precargado hacia el emisor original
+            viewingUserId = offer.from;
+            openOfferModal();
+        }
+        // Manejo de actualizaciones de oferta (aceptada/rechazada/contraoferta)
+        function updateOfferModal(update) {
+            try {
+                const msg = document.getElementById('auction-msg');
+                const action = update && update.action;
+                const offer = update && update.offer;
+                // Cerrar cualquier modal abierto relacionado
+                closeOfferReceivedModal();
+                closeOfferModal();
+                if (action === 'accept') {
+                    msg && (msg.textContent = 'Tu oferta fue aceptada.');
+                } else if (action === 'reject') {
+                    msg && (msg.textContent = 'Tu oferta fue rechazada.');
+                } else if (action === 'counter') {
+                    // En caso de contraoferta, reabrir creador apuntando al emisor
+                    if (offer && offer.from) {
+                        viewingUserId = offer.from;
+                        openOfferModal();
+                    }
+                    msg && (msg.textContent = 'Has recibido una contraoferta.');
+                } else {
+                    msg && (msg.textContent = 'Actualización de oferta recibida.');
+                }
+                if (msg) setTimeout(() => { msg.textContent = ''; }, 3000);
+            } catch (e) {
+                console.warn('updateOfferModal error', e);
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            /* Primary background (fondo.jpg) with fallback to Fotos/1.png + gradient overlay */
+            background:
+                linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.35)),
+                url('fondo.png') no-repeat center center fixed,
+                url('Fotos/fondo.png') no-repeat center center fixed;
+            background-size: cover, cover, cover;
+            position: relative;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.55);
+            z-index: -1;
+        }
+        .player-card {
+            perspective: 1200px;
+            transform-style: preserve-3d;
+            transition: box-shadow 0.3s ease, border-color 0.3s ease;
+            position: relative;
+            width: 100%;
+            height: 100%;
+            min-height: 520px;
+            border-radius: 1.25rem;
+            background: radial-gradient(1200px 600px at 50% -10%, rgba(16,185,129,0.08), transparent 50%),
+                        linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+            box-shadow: var(--card-shadow);
+            border: 1px solid var(--card-border);
+            overflow: hidden;
+            /* Chamfered (notched) corners */
+            -webkit-clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+            clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+        }
+        /* Soft gradient edge around the notched shape */
+        .player-card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(135deg, rgba(16,185,129,0.25), rgba(52,211,153,0.05));
+            opacity: 0.25;
+            -webkit-clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+            clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+        }
+        /* Rotación controlada por caras en lugar de la tarjeta contenedora */
+        .player-card.is-revealed .card-front { transform: rotateY(180deg); }
+        .player-card.is-revealed .card-back { transform: rotateY(0deg); }
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 1.25rem;
+            background: linear-gradient(180deg, rgba(17,24,39,0.85), rgba(15,23,42,0.95));
+            border-radius: 1.25rem;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: transform 0.8s;
+            -webkit-clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+            clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+        }
+        .card-front { transform: rotateY(0deg); }
+        .card-back  { transform: rotateY(180deg); }
+        .player-image-container {
+            width: 320px;
+            height: 320px;
+            margin: 0.5rem auto 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 9999px; /* circular to contrast with notched card */
+            overflow: hidden;
+            background: radial-gradient(600px 300px at 50% -20%, rgba(52,211,153,0.18), rgba(0,0,0,0.3));
+            box-shadow: 0 10px 35px -14px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(255,255,255,0.06);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            position: relative;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .player-image-container::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(140px 80px at 30% 20%, rgba(255,255,255,0.12), transparent 60%);
+            pointer-events: none;
+        }
+        
+        #player-photo, #player-clue-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            margin: 0 auto;
+            padding: 6px; /* evitar recortes al borde */
+            -webkit-user-drag: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        #player-clue-image {
+            /* Silueta casi negra para ocultar detalles */
+            filter: grayscale(1) brightness(0.08) contrast(1.6) drop-shadow(0 0 2px rgba(0,0,0,0.9));
+            -webkit-user-drag: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        .price-display {
+            font-size: 2.25rem;
+            font-weight: 800;
+            color: #e6fff5;
+            margin: 0.35rem 0;
+            text-align: center;
+            max-width: 100%;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            padding: 0.6rem 1.1rem;
+            line-height: 1.15;
+            background: linear-gradient(180deg, rgba(16,185,129,0.17), rgba(16,185,129,0.10));
+            border-radius: 0.65rem;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 20px -12px rgba(16,185,129,0.35);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+        }
+        
+        .price-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            color: #a7f3d0;
+            margin-bottom: 0.35rem;
+            text-transform: uppercase;
+            position: relative;
+            display: inline-block;
+            padding-bottom: 0.3rem;
+            opacity: 0.9;
+        }
+        
+        .price-label::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 48px;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            filter: drop-shadow(0 0 4px rgba(16,185,129,0.45));
+        }
+
+        /* Team panel polish */
+        #team-panel h3 {
+            letter-spacing: 0.02em;
+        }
+        #team-panel h3 .accent {
+            background-image: linear-gradient(90deg, #6ee7b7, #34d399);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        /* Avatares barra de equipos */
+        #team-viewers-bar {
+            overflow: visible; /* evitar cortar glow en ambos ejes */
+            padding-top: 4px; padding-bottom: 4px;
+        }
+        #team-viewers-bar .viewer-btn {
+            border: 1px solid rgba(148,163,184,0.25);
+            border-radius: 9999px;
+            padding: 2px;
+            background: rgba(17,24,39,0.6);
+            transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+            outline: 0 solid transparent;
+            outline-offset: 3px;
+            margin: 1px; /* espacio para glow */
+        }
+        #team-viewers-bar .viewer-btn img {
+            width: 36px; height: 36px; border-radius: 9999px; object-fit: cover;
+        }
+        #team-viewers-bar .viewer-btn:hover { transform: translateY(-1px); border-color: rgba(52,211,153,0.6); }
+        #team-viewers-bar .viewer-btn.active { box-shadow: 0 0 0 2px rgba(52,211,153,0.6); border-color: rgba(52,211,153,0.9); outline: 2px solid rgba(52,211,153,0.6); }
+        .team-line {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0;
+        }
+        .team-slot {
+            width: 62px;
+            text-align: center;
+            position: relative;
+        }
+        .team-slot__photo {
+            width: 62px;
+            height: 62px;
+            border-radius: 11px;
+            overflow: hidden;
+            border: 1px solid rgba(148,163,184,0.25);
+            background: rgba(17,24,39,0.6);
+            box-shadow: 0 8px 22px -16px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+        .team-slot__photo img { width: 100%; height: 100%; object-fit: contain; }
+        .team-slot__name { margin-top: 6px; font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .team-slot__price { font-size: 11px; color: #6ee7b7; font-weight: 800; }
+        .team-slot__badge {
+            position: absolute;
+            top: -6px;
+            left: -6px;
+            font-size: 10px;
+            font-weight: 800;
+            color: #0b3b2d;
+            background: linear-gradient(180deg, #6ee7b7, #34d399);
+            border: 1px solid rgba(16,185,129,0.5);
+            border-radius: 10px;
+            padding: 2px 6px;
+            box-shadow: 0 8px 18px -12px rgba(16,185,129,0.6), inset 0 1px 0 rgba(255,255,255,0.4);
+        }
+        .team-slot--empty .team-slot__photo { border-style: dashed; border-color: rgba(148,163,184,0.35); background: rgba(17,24,39,0.35); }
+        .team-slot--empty .team-slot__label { margin-top: 6px; font-size: 11px; color: #9ca3af; font-weight: 700; letter-spacing: 0.02em; }
+
+        /* Minimal background for the team section */
+        #team-slots {
+            padding: 12px 14px;
+            border-radius: 16px;
+            border: 1px solid rgba(148,163,184,0.18);
+            background: linear-gradient(180deg, rgba(16,185,129,0.06), rgba(16,185,129,0.03));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+
+        /* Buttons polish */
+        #reveal-button, #next-round-button {
+            background-image: linear-gradient(135deg, rgba(16,185,129,0.22), rgba(52,211,153,0.18));
+            border: 1px solid rgba(16,185,129,0.35);
+            box-shadow: 0 10px 25px -10px rgba(16,185,129,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+            backdrop-filter: blur(2px);
+        }
+        #reveal-button:hover, #next-round-button:hover {
+            transform: translateY(-1px) scale(1.01);
+            box-shadow: 0 14px 30px -10px rgba(16,185,129,0.55), inset 0 1px 0 rgba(255,255,255,0.12);
+            filter: saturate(1.05);
+        }
+        #reveal-button:active, #next-round-button:active {
+            transform: translateY(0) scale(0.995);
+        }
+        #reveal-button:focus-visible, #next-round-button:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(19, 197, 138, 0.35), 0 0 0 6px rgba(16,185,129,0.15);
+        }
+
+        /* Progress pill styling */
+        .progress-pill {
+            display: inline-block;
+            padding: 0.25rem 0.65rem;
+            font-weight: 800;
+            letter-spacing: 0.1em;
+            font-size: 0.95rem;
+            color: #d1fae5; /* emerald-100 */
+            background: linear-gradient(180deg, rgba(16,185,129,0.18), rgba(16,185,129,0.10));
+            border: 1px solid rgba(16,185,129,0.35);
+            border-radius: 999px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 6px 16px -10px rgba(16,185,129,0.45);
+        }
+        /* Position title sizing helpers */
+        .pos-title { font-size: 2.75rem; line-height: 1.1; }
+        @media (min-width: 768px) { .pos-title { font-size: 3rem; } }
+        .pos-title.compact { font-size: 2.25rem; }
+        @media (min-width: 768px) { .pos-title.compact { font-size: 2.5rem; } }
+        .pos-title.x-compact { font-size: 1.9rem; }
+        @media (min-width: 768px) { .pos-title.x-compact { font-size: 2.1rem; } }
+        /* Lock position title to a fixed spot to avoid vertical drift */
+        #round-title {
+            display: grid;
+            grid-template-rows: 72px auto; /* lock title row height */
+            align-content: start;
+            justify-items: center;
+            height: 110px; /* total block height */
+        }
+        @media (min-width: 768px) {
+            #round-title {
+                grid-template-rows: 80px auto; /* lock title row height on md+ */
+                height: 120px;
+            }
+        }
+        /* Lock the title line box so progress row doesn't shift */
+        #round-title > .pos-title {
+            height: 72px;
+            display: flex;
+            align-items: flex-end; /* baseline alignment */
+            margin: 0;
+            line-height: 1.05;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        @media (min-width: 768px) { #round-title > .pos-title { height: 80px; } }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-50 p-6 flex flex-col items-center justify-center min-h-screen">
+
+    <!-- Lobby (beta) -->
+    <section id="lobby" class="w-full max-w-3xl mb-6 bg-gray-800/80 border border-gray-700/40 rounded-2xl p-6 backdrop-blur-sm shadow-lg">
+        <h3 class="text-xl font-bold text-white mb-4">Lobby</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="md:col-span-2 flex flex-col gap-3">
+                <div class="flex items-center gap-3">
+                    <button id="create-room" class="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 font-bold">Crear sala</button>
+                    <input id="join-code" type="text" placeholder="Código de sala" class="flex-1 bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"/>
+                    <button id="join-room" class="px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 font-bold">Unirse</button>
+                </div>
+                <div class="flex items-center gap-4 text-sm">
+                    <span class="text-gray-300">Rol:</span>
+                    <span id="role-display" class="font-bold text-white">Anfitrión</span>
+                    <span class="text-gray-600">|</span>
+                    <span id="room-code" class="font-bold text-emerald-400">Sin sala</span>
+                </div>
+            </div>
+            <div class="flex items-start md:items-center justify-end">
+                <button id="start-game" class="hidden px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 font-bold">Iniciar juego</button>
+            </div>
+        </div>
+        <!-- Identity + Participants -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <!-- Identity settings -->
+            <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+                <h4 class="text-white font-semibold mb-3">Tu perfil</h4>
+                <div class="flex items-center gap-3 mb-2">
+                    <img id="avatar-preview" src="" alt="avatar" class="w-12 h-12 rounded-full object-cover bg-black/30 border border-gray-700"/>
+                    <input id="display-name" type="text" maxlength="24" placeholder="Tu nombre (obligatorio)" class="flex-1 bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-white"/>
+                </div>
+                <div id="name-error" class="hidden text-xs text-red-400 mb-3">Ingresa un nombre (mínimo 2 caracteres).</div>
+                <div>
+                    <div class="text-xs text-gray-400 mb-2">Elige un avatar</div>
+                    <div id="avatar-choices" class="flex items-center gap-2 flex-wrap"></div>
+                    <div id="avatar-error" class="hidden text-xs text-red-400 mt-2"></div>
+                </div>
+            </div>
+            <!-- Participants list -->
+            <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+                <h4 class="text-white font-semibold mb-3">Participantes</h4>
+                <div id="participants-list" class="flex flex-col gap-2"></div>
+            </div>
+        </div>
+    </section>
+
+    <div id="game-stage" class="hidden w-full max-w-6xl grid grid-cols-1 md:grid-cols-[1fr_minmax(0,700px)_1fr] gap-6 items-start md:items-center justify-items-center">
+        <!-- Panel de Subasta (Izquierda) -->
+        <aside id="auction-panel" class="w-full md:col-start-1 md:justify-self-end md:w-[320px] bg-gradient-to-br from-gray-800/90 to-gray-900/90 rounded-2xl p-6 backdrop-blur-sm border border-gray-700/30 shadow-lg">
+            <div class="mb-3 flex items-center gap-2">
+                <button id="transfer-market-pill" type="button" class="inline-block text-xs font-bold px-3 py-1 rounded-full border cursor-pointer select-none transition-colors">Mercado: Cerrado</button>
+            </div>
+            <h3 class="text-lg font-bold text-white mb-4 text-center">Subasta</h3>
+            <div class="space-y-4 text-sm">
+                <div class="text-center">
+                    <div class="text-gray-300 font-medium mb-1">Presupuesto</div>
+                    <div id="budget-display" class="font-extrabold text-emerald-400 text-3xl">$900M</div>
+                </div>
+                <div class="pt-2">
+                    <label for="bid-input" class="block text-center text-gray-300 font-medium mb-2">Tu puja (mín. precio, de 5 en 5)</label>
+                    <div class="flex items-center gap-2">
+                        <button id="minus5" class="px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white">-5</button>
+                        <input id="bid-input" type="number" step="5" min="0" value="0" class="flex-1 bg-gray-800/70 border border-gray-700/60 rounded-lg px-4 py-3 text-white text-lg text-center focus:outline-none focus:ring-2 focus:ring-emerald-500"/>
+                        <button id="plus5" class="px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-white">+5</button>
+                    </div>
+                </div>
+                <div class="pt-1">
+                    <button id="buy-button" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-lg transition-all">Pujar</button>
+                </div>
+                <!-- Puja actual abajo con info del pujador -->
+                <div id="current-bid-info" class="hidden mt-2 flex items-center gap-3 p-2 rounded-lg bg-gray-900/40 border border-gray-800">
+                    <img id="current-bidder-avatar" src="" alt="avatar" class="w-8 h-8 rounded-full object-cover bg-black/30 border border-gray-700"/>
+                    <div class="flex-1 min-w-0">
+                        <div id="current-bidder-name" class="text-sm text-white truncate">—</div>
+                        <div class="text-xs text-gray-400">Puja actual</div>
+                    </div>
+                    <div id="current-bid-bottom" class="font-extrabold text-white">$0M</div>
+                </div>
+                <p id="auction-msg" class="text-xs text-gray-300 min-h-[1.25rem] text-center"></p>
+            </div>
+            <hr class="my-4 border-gray-700/50"/>
+            <div class="text-xs text-gray-400 space-y-1">
+                <p>• La puja mínima es el precio del jugador.</p>
+                <p>• Los incrementos deben ser de 5M.</p>
+                <p>• Presupuesto inicial: 1100M.</p>
+                <p>• Solo 1 compra por posición.</p>
+            </div>
+        </aside>
+
+        <!-- Contenedor principal del juego (Centro) -->
+        <div id="game-container" class="max-w-md w-full mx-auto md:col-start-2 md:col-end-3 justify-self-center bg-gradient-to-br from-gray-800/90 to-gray-900/90 rounded-2xl p-8 text-center backdrop-blur-sm border border-gray-700/30 shadow-lg">
+        <h2 id="round-title" class="text-2xl font-bold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-emerald-500"></h2>
+        <!-- Barra de participantes en juego -->
+        <div id="participants-bar" class="flex flex-wrap items-center justify-center gap-3 mb-4"></div>
+        
+        <div id="player-card" class="player-card w-full relative">
+            <!-- Cara frontal (precio y pistas) -->
+            <div class="card-face card-front flex flex-col items-center">
+                <div class="w-full flex-1 flex flex-col">
+                    <div class="player-image-container mx-auto" id="player-image-container-front">
+                        <img id="player-clue-image" src="" alt="Pista" class="w-full h-full" draggable="false">
+                    </div>
+                    <div class="w-full text-center mt-2">
+                        <div class="price-label">Valor de Transfermarkt</div>
+                        <p id="price-display" class="price-display"></p>
+                    </div>
+                </div>
+                <div class="w-full mt-auto">
+                    <h3 id="clues-title" class="text-lg font-semibold text-gray-400 mb-1">Pistas</h3>
+                    <p id="player-clues" class="text-sm text-gray-300 px-2 text-center"></p>
+                </div>
+            </div>
+            
+            <!-- Cara trasera (jugador revelado) -->
+            <div class="card-face card-back flex flex-col items-center">
+                <div class="w-full flex-1 flex flex-col">
+                    <div class="player-image-container mx-auto" id="player-image-container-back">
+                        <img id="player-photo" src="" alt="Foto del jugador" class="w-full h-full" draggable="false">
+                    </div>
+                    <div class="w-full text-center mt-2">
+                        <div class="price-label">Valor de Transfermarkt</div>
+                        <p id="back-price-display" class="price-display"></p>
+                        <h3 id="player-name" class="text-2xl font-bold text-white text-center mt-2"></h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button id="confirm-button" class="mt-8 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform">
+            Confirmar (Host)
+        </button>
+        <button id="next-round-button" class="hidden mt-8 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform">
+            Siguiente Jugador
+        </button>
+        </div>
+        <!-- Panel de Equipo (Derecha) -->
+        <aside id="team-panel" class="w-full md:col-start-3 md:justify-self-start md:w-[320px] bg-gradient-to-br from-gray-800/90 to-gray-900/90 rounded-2xl p-6 backdrop-blur-sm border border-gray-700/30 shadow-lg">
+            <h3 class="text-lg font-bold text-white mb-3"><span class="accent">Tu Equipo</span> <span class="text-gray-300 font-normal">(4-3-3)</span></h3>
+            <!-- Barra de visualización de equipos de participantes -->
+            <div id="team-viewers-bar" class="flex items-center gap-2 mb-3 overflow-x-auto pb-1"></div>
+            <div id="team-slots" class="space-y-4"></div>
+        </aside>
+    </div>
+
+    <div id="end-game-message" class="hidden max-w-md w-full bg-gray-800 rounded-xl p-8 shadow-2xl text-center">
+        <h2 class="text-3xl font-extrabold text-green-400 mb-4">¡Subasta Terminada!</h2>
+        <p class="text-xl text-gray-300">¡Han subastado a todos los jugadores! A ver quién armó el mejor equipo.</p>
+    </div>
+
+    <!-- Modal de participante -->
+    <div id="participant-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
+        <div class="absolute inset-0 bg-black/60"></div>
+        <div class="relative bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md mx-4 text-white">
+            <div class="flex items-center justify-between mb-4">
+                <h3 id="pm-name" class="text-xl font-bold"></h3>
+                <button id="pm-close" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Cerrar</button>
+            </div>
+            <div class="flex items-center gap-3 mb-3">
+                <img id="pm-avatar" src="" class="w-12 h-12 rounded-full object-cover" alt="avatar"/>
+                <div class="text-emerald-400 font-extrabold" id="pm-budget"></div>
+            </div>
+            <div>
+                <h4 class="font-semibold mb-2">Equipo</h4>
+                <div id="pm-team" class="space-y-2 max-h-64 overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
