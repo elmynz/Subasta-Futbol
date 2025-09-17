@@ -4,8 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 
-// Read the HTML file
-const filePath = path.join(__dirname, 'home.html');
+// Read the HTML file (updated to index.html)
+const filePath = path.join(__dirname, 'index.html');
 let content = fs.readFileSync(filePath, 'utf8');
 
 // Function to calculate fake price (25% higher than real price)

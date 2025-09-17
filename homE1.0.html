@@ -552,10 +552,220 @@
             }
         }
 
+        // ===== ADMIN: Configuración de probabilidades y precio uniforme =====
+        // Pesos por categoría configurables desde UI
+        let adminWeights = {
+            'PRIME': 8,
+            'Muy Bueno': 16,
+            'Bueno': 22,
+            'Normal': 29,
+            'Malo': 25,
+        };
+        // Control de precio uniforme
+        let adminUniformEnabled = false;
+        let adminUniformPrice = 50; // valor por defecto en millones
+
+        function getEffectivePrice(player) {
+            const base = Number(player && player.price) || 0;
+            if (adminUniformEnabled) return Math.max(0, Number(adminUniformPrice) || 0);
+            return base;
+        }
+
+        // ===== ADMIN PANEL UI =====
+        function updateAdminVisibility() {
+            const panel = document.getElementById('admin-panel');
+            if (!panel) return;
+            // Visible solo si eres host y estás en el lobby (no en juego)
+            const show = !!isHost && !inGame;
+            panel.classList.toggle('hidden', !show);
+            const fab = document.getElementById('admin-fab');
+            if (fab) fab.classList.toggle('hidden', !show);
+        }
+
+        function reEmitCurrentPlayerIfHost() {
+            try {
+                if (!isHost || !socket || !roomCode) return;
+                const player = playersForCurrentPosition && playersForCurrentPosition[currentPlayerIndex];
+                if (!player) return;
+                const adj = { ...player, price: getEffectivePrice(player) };
+                playersForCurrentPosition[currentPlayerIndex] = adj;
+                socket.emit('set_player', { code: roomCode, player: adj, index: (currentPlayerIndex || 0) + 1 });
+                // refrescar UI local
+                updateAuctionUI(adj);
+                const priceDisplay = document.getElementById('price-display');
+                const backPriceDisplay = document.getElementById('back-price-display');
+                if (priceDisplay) priceDisplay.textContent = `$${getEffectivePrice(adj)}M`;
+                if (backPriceDisplay) backPriceDisplay.textContent = `$${getEffectivePrice(adj)}M`;
+            } catch(_) {}
+        }
+
+        function applyCurrentPriceManual(value) {
+            try {
+                const v = Math.max(0, Number(value) || 0);
+                if (!playersForCurrentPosition || !playersForCurrentPosition[currentPlayerIndex]) return;
+                playersForCurrentPosition[currentPlayerIndex] = { ...playersForCurrentPosition[currentPlayerIndex], price: v };
+                showToast(`Precio del jugador actual fijado en $${v}M`, 'success');
+                reEmitCurrentPlayerIfHost();
+            } catch(_) {}
+        }
+
+        function applyUniformToAllPlayers() {
+            const v = Math.max(0, Number(adminUniformPrice) || 0);
+            Object.keys(playersByPosition).forEach(pos => {
+                const groups = playersByPosition[pos] || {};
+                Object.keys(groups).forEach(level => {
+                    playersByPosition[pos][level] = (groups[level] || []).map(p => ({ ...p, price: v }));
+                });
+            });
+            showToast(`Precio de $${v}M aplicado a todos los jugadores`, 'success');
+            // re-emitir jugador actual si soy host
+            reEmitCurrentPlayerIfHost();
+        }
+
+        function renderAdminPanel() {
+            // Crear panel sólo una vez
+            if (document.getElementById('admin-panel')) return;
+            const panel = document.createElement('div');
+            panel.id = 'admin-panel';
+            panel.className = 'hidden fixed top-4 right-4 z-50 w-80 bg-slate-900 text-white border border-white/10 rounded-xl shadow-2xl p-4 space-y-3';
+            panel.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-semibold">Panel Admin</h3>
+                    <button id="admin-close" class="text-white/70 hover:text-white">✕</button>
+                </div>
+                <div class="space-y-2">
+                    <div>
+                        <div class="text-sm text-white/70 mb-1">Probabilidades por categoría</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="text-xs">PRIME <input id="w-PRIME" type="number" class="w-full mt-1 bg-slate-800 border border-white/10 rounded px-2 py-1" value="${adminWeights['PRIME']}"></label>
+                            <label class="text-xs">Muy Bueno <input id="w-Muy Bueno" type="number" class="w-full mt-1 bg-slate-800 border border-white/10 rounded px-2 py-1" value="${adminWeights['Muy Bueno']}"></label>
+                            <label class="text-xs">Bueno <input id="w-Bueno" type="number" class="w-full mt-1 bg-slate-800 border border-white/10 rounded px-2 py-1" value="${adminWeights['Bueno']}"></label>
+                            <label class="text-xs">Normal <input id="w-Normal" type="number" class="w-full mt-1 bg-slate-800 border border-white/10 rounded px-2 py-1" value="${adminWeights['Normal']}"></label>
+                            <label class="text-xs">Malo <input id="w-Malo" type="number" class="w-full mt-1 bg-slate-800 border border-white/10 rounded px-2 py-1" value="${adminWeights['Malo']}"></label>
+                        </div>
+                        <button id="apply-weights" class="mt-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-3 py-2 rounded">Aplicar probabilidades</button>
+                    </div>
+                    <div class="pt-2 border-t border-white/10">
+                        <div class="text-sm text-white/70 mb-1">Presupuesto de TODOS los jugadores</div>
+                        <div class="flex items-center gap-2">
+                            <input id="all-budgets-amount" type="number" class="w-32 bg-slate-800 border border-white/10 rounded px-2 py-1" placeholder="ej: 1100">
+                            <button id="apply-all-budgets" class="bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold px-3 py-2 rounded">Aplicar a todos</button>
+                        </div>
+                        <div class="text-[11px] text-white/60 mt-1">Solo disponible en el lobby. Cambia el presupuesto de inicio de todos los participantes.</div>
+                    </div>
+                    <div class="pt-2 border-t border-white/10">
+                        <label class="flex items-center gap-2 text-sm"><input id="uniform-toggle" type="checkbox" class="accent-emerald-500"> Usar precio uniforme</label>
+                        <div class="mt-1 flex items-center gap-2">
+                            <input id="uniform-price" type="number" class="w-32 bg-slate-800 border border-white/10 rounded px-2 py-1" value="${adminUniformPrice}">
+                            <span class="text-sm">Millones</span>
+                        </div>
+                        <div class="mt-2 grid grid-cols-2 gap-2">
+                            <button id="apply-uniform-now" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-3 py-2 rounded">Re-enviar jugador actual</button>
+                            <button id="apply-uniform-all" class="bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold px-3 py-2 rounded">Aplicar a TODOS</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(panel);
+
+            // Toggle botón flotante para abrir el panel (para host)
+            let fab = document.getElementById('admin-fab');
+            if (!fab) {
+                fab = document.createElement('button');
+                fab.id = 'admin-fab';
+                fab.className = 'fixed bottom-4 right-4 z-40 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-full shadow-lg w-12 h-12 flex items-center justify-center';
+                fab.title = 'Panel Admin';
+                fab.textContent = '⚙️';
+                document.body.appendChild(fab);
+            }
+
+            // Estado inicial de controles
+            const tgl = panel.querySelector('#uniform-toggle');
+            const upi = panel.querySelector('#uniform-price');
+            if (tgl) tgl.checked = !!adminUniformEnabled;
+            if (upi) upi.value = String(adminUniformPrice);
+
+            // Eventos
+            const closeBtn = panel.querySelector('#admin-close');
+            if (closeBtn) closeBtn.addEventListener('click', () => panel.classList.add('hidden'));
+            if (fab) fab.addEventListener('click', () => {
+                if (!isHost) return; // solo host
+                panel.classList.toggle('hidden');
+            });
+            const applyWeights = panel.querySelector('#apply-weights');
+            if (applyWeights) applyWeights.addEventListener('click', () => {
+                const keys = ['PRIME','Muy Bueno','Bueno','Normal','Malo'];
+                keys.forEach(k => {
+                    const el = panel.querySelector(`#w-${k}`);
+                    if (el) adminWeights[k] = Math.max(0, Number(el.value) || 0);
+                });
+                showToast('Probabilidades actualizadas', 'success');
+            });
+            const applyBudgetsBtn = panel.querySelector('#apply-all-budgets');
+            const budgetsInput = panel.querySelector('#all-budgets-amount');
+            if (applyBudgetsBtn && budgetsInput) applyBudgetsBtn.addEventListener('click', () => {
+                if (!isHost || !socket || !roomCode) return;
+                const amount = Math.max(0, Number(budgetsInput.value) || 0);
+                socket.emit('set_all_budgets', { code: roomCode, amount });
+                showToast(`Presupuesto de $${amount}M aplicado a todos`, 'success');
+            });
+            if (tgl) tgl.addEventListener('change', () => {
+                adminUniformEnabled = !!tgl.checked;
+                // refrescar UI/estado del jugador actual
+                reEmitCurrentPlayerIfHost();
+            });
+            if (upi) upi.addEventListener('change', () => {
+                adminUniformPrice = Math.max(0, Number(upi.value) || 0);
+                if (adminUniformEnabled) reEmitCurrentPlayerIfHost();
+            });
+            const applyNow = panel.querySelector('#apply-uniform-now');
+            if (applyNow) applyNow.addEventListener('click', () => {
+                reEmitCurrentPlayerIfHost();
+            });
+            const applyAll = panel.querySelector('#apply-uniform-all');
+            if (applyAll) applyAll.addEventListener('click', () => {
+                applyUniformToAllPlayers();
+            });
+        }
+
         // Manifest de fotos disponible en el servidor
         let photoManifest = new Set();
         let manifestLoaded = false;
         let manifestPromise = null;
+
+        // Toast simple para mensajes visuales globales
+        function showToast(message, type = 'info') {
+            try {
+                let wrap = document.getElementById('toast-wrap');
+                if (!wrap) {
+                    wrap = document.createElement('div');
+                    wrap.id = 'toast-wrap';
+                    wrap.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[1000] flex flex-col items-center gap-2';
+                    document.body.appendChild(wrap);
+                }
+                const base = 'px-4 py-2 rounded-lg shadow text-white text-sm border';
+                const color = type === 'success' ? 'bg-emerald-600 border-emerald-400/60' : type === 'error' ? 'bg-red-600 border-red-400/60' : 'bg-gray-800 border-gray-600/60';
+                const el = document.createElement('div');
+                el.className = base + ' ' + color;
+                el.textContent = message;
+                wrap.appendChild(el);
+                setTimeout(() => { try { el.remove(); if (wrap && wrap.children.length === 0) wrap.remove(); } catch(_) {} }, 2500);
+            } catch(_) {}
+        }
+        // Badge cercano a un elemento (por ejemplo, "Codigo Copiado")
+        function showBadgeNear(el, text) {
+            try {
+                if (!el) return;
+                const rect = el.getBoundingClientRect();
+                const badge = document.createElement('div');
+                badge.textContent = text;
+                badge.className = 'fixed z-[1001] px-2 py-1 rounded bg-emerald-600 text-white text-xs shadow border border-emerald-400/60';
+                badge.style.top = `${Math.max(8, rect.top - 28)}px`;
+                badge.style.left = `${rect.left}px`;
+                document.body.appendChild(badge);
+                setTimeout(() => { try { badge.remove(); } catch(_) {} }, 1800);
+            } catch(_) {}
+        }
         function loadPhotoManifest() {
             manifestPromise = fetch('/photo-manifest')
                 .then(r => r.ok ? r.json() : { files: [] })
@@ -606,6 +816,7 @@
         function setTransferMarket(open) {
             transferMarketOpen = !!open;
             const pill = document.getElementById('transfer-market-pill');
+            console.log('[client] setTransferMarket ->', { transferMarketOpen, isHost, hasPill: !!pill });
             if (pill) {
                 pill.textContent = transferMarketOpen ? 'Mercado: Abierto' : 'Mercado: Cerrado';
                 // Reset base classes first
@@ -623,6 +834,8 @@
                     pill.classList.add('cursor-not-allowed','opacity-60');
                     pill.classList.remove('cursor-pointer');
                 }
+                // Asegurar que nunca quede deshabilitado
+                try { pill.removeAttribute('disabled'); } catch(_) {}
             }
             renderOfferCTA();
         }
@@ -644,14 +857,50 @@
         let lastBidderId = null; // no permitir pujar dos veces seguidas
         let winnersThisPosition = 0; // cantidad de adjudicaciones en la posición actual
         let skipUsedThisPosition = false; // solo 1 salto permitido por posición
+        // Temporizador de subasta (cliente)
+        let auctionTimerEndAt = null; // timestamp en ms
+        let auctionTimerInterval = null;
         
         function formatM(n) { return `$${n}M`; }
+
+        // ===== Temporizador de subasta (cliente) =====
+        function stopLocalTimer() {
+            if (auctionTimerInterval) {
+                clearInterval(auctionTimerInterval);
+                auctionTimerInterval = null;
+            }
+            auctionTimerEndAt = null;
+            const box = document.getElementById('auction-timer');
+            const val = document.getElementById('auction-timer-value');
+            if (box) box.classList.add('invisible');
+            if (val) val.textContent = '5.0s';
+        }
+
+        function startLocalTimer(endAt) {
+            auctionTimerEndAt = endAt;
+            const box = document.getElementById('auction-timer');
+            const val = document.getElementById('auction-timer-value');
+            if (box) box.classList.remove('invisible');
+            const tick = () => {
+                const remaining = Math.max(0, (auctionTimerEndAt || 0) - Date.now());
+                if (val) val.textContent = (remaining / 1000).toFixed(1) + 's';
+                if (remaining <= 0) {
+                    stopLocalTimer();
+                }
+            };
+            if (auctionTimerInterval) clearInterval(auctionTimerInterval);
+            tick();
+            auctionTimerInterval = setInterval(tick, 100);
+        }
 
         // ===== Online (beta) + Lobby =====
         let isHost = false; // se define al crear/unirse a una sala
         let roomCode = '';
         let inGame = false; // Lobby por defecto
         let socket = null; // Socket.IO client
+        // ===== Ruleta =====
+        let rouletteEligibleCount = 0;
+        let rouletteLocked = false; // no se puede usar si el jugador fue revelado/saltado
         // Estado sincronizado desde servidor (para invitados)
         let serverPositionName = '';
         let serverRounds = 0;
@@ -727,6 +976,30 @@
             if (startBtn) startBtn.classList.toggle('hidden', !(isHost && !!roomCode && !inGame));
             if (lobbyWrap) lobbyWrap.classList.toggle('hidden', inGame);
             if (stage) stage.classList.toggle('hidden', !inGame);
+            const spinBtnTop = document.getElementById('spin-roulette-top');
+            if (spinBtnTop) {
+                const hide = !isHost || !inGame;
+                spinBtnTop.classList.toggle('hidden', hide);
+                // Nunca deshabilitar para permitir abrir modal; solo indicar estado visual
+                const visuallyDisabled = hide || (rouletteEligibleCount <= 0);
+                try { spinBtnTop.disabled = false; } catch(_) {}
+                spinBtnTop.classList.toggle('opacity-50', visuallyDisabled);
+                spinBtnTop.classList.toggle('cursor-not-allowed', visuallyDisabled);
+            }
+            // Mantener oculta la caja lateral de ruleta: solo botón superior
+            const rouletteBox = document.getElementById('roulette-box');
+            if (rouletteBox) rouletteBox.classList.add('hidden');
+            const spinBtnSide = document.getElementById('spin-roulette');
+            if (spinBtnSide) {
+                const hide = !isHost || !inGame;
+                spinBtnSide.classList.toggle('hidden', hide);
+                const visuallyDisabled = hide || (rouletteEligibleCount <= 0);
+                try { spinBtnSide.disabled = false; } catch(_) {}
+                spinBtnSide.classList.toggle('opacity-50', visuallyDisabled);
+                spinBtnSide.classList.toggle('cursor-not-allowed', visuallyDisabled);
+            }
+            const badge = document.getElementById('roulette-eligible-badge');
+            if (badge) badge.textContent = String(Math.max(0, rouletteEligibleCount||0));
         }
 
         function startGame() {
@@ -757,6 +1030,18 @@
                     ${p.id === currentUser.id ? '<span class="text-emerald-400 text-xs font-bold">Tú</span>' : ''}
                 </div>
             `).join('');
+            // Hacer los participantes clicables para ver su equipo y habilitar Ofertar
+            Array.from(list.children).forEach((row, idx) => {
+                const p = participants[idx];
+                if (!p) return;
+                row.style.cursor = 'pointer';
+                row.onclick = () => {
+                    viewingUserId = p.id;
+                    updateTeamUI();
+                    renderOfferCTA();
+                    playClick();
+                };
+            });
         }
 
         // Renderiza barra de avatares para ver plantillas (4-3-3) de otros jugadores
@@ -885,6 +1170,7 @@
         function renderOfferCTA() {
             // Mostrar botón "Ofertar" cuando: mercado abierto + estás viendo otro usuario
             const panel = document.getElementById('team-panel');
+            console.log('[client] renderOfferCTA -> pre', { transferMarketOpen, viewingUserId, currentUserId: currentUser && currentUser.id, hasPanel: !!panel });
             if (!panel) return;
             let cta = document.getElementById('offer-cta');
             if (!cta) {
@@ -896,12 +1182,13 @@
             const viewingOther = !!viewingUserId && viewingUserId !== currentUser.id;
             if (transferMarketOpen && viewingOther) {
                 cta.innerHTML = `<button id="open-offer-modal" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg transition-all">Ofertar</button>`;
-                const btn = document.getElementById('open-offer-modal');
-                if (btn) btn.onclick = openOfferModal;
+                // Click se maneja por delegación global; no asignar inline para evitar carreras
                 cta.classList.remove('hidden');
+                console.log('[client] renderOfferCTA -> showing Offer button', { viewingUserId });
             } else {
                 cta.classList.add('hidden');
                 cta.innerHTML = '';
+                console.log('[client] renderOfferCTA -> hiding Offer button', { viewingOther, transferMarketOpen });
             }
         }
 
@@ -924,14 +1211,23 @@
             const msg = document.getElementById('auction-msg');
             if (budgetEl) budgetEl.textContent = formatM(userBudget);
             if (bidAmountEl) bidAmountEl.textContent = formatM(currentBid);
+            // Mostrar info del pujador si hay, manteniendo tamaño fijo con 'invisible'
             if (bidInfo) {
-                if (currentBid > 0 && lastBidderId) {
-                    const p = participants.find(x => x.id === lastBidderId);
-                    if (p && bidderAvatar) bidderAvatar.src = p.avatar || '';
-                    if (p && bidderName) bidderName.textContent = p.name || 'Jugador';
-                    bidInfo.classList.remove('hidden');
+                if (lastBidderId && currentBid > 0) {
+                    const p = participants.find(p => p.id === lastBidderId);
+                    if (p) {
+                        if (bidderAvatar) bidderAvatar.src = p.avatar || '';
+                        if (bidderName) bidderName.textContent = p.name || '—';
+                    } else {
+                        if (bidderAvatar) bidderAvatar.src = '';
+                        if (bidderName) bidderName.textContent = '—';
+                    }
+                    bidInfo.classList.remove('invisible');
                 } else {
-                    bidInfo.classList.add('hidden');
+                    // Placeholders cuando no hay pujador
+                    if (bidderAvatar) bidderAvatar.src = '';
+                    if (bidderName) bidderName.textContent = '—';
+                    bidInfo.classList.add('invisible');
                 }
             }
             if (input) {
@@ -976,19 +1272,34 @@
         }
 
         function buildCategoryWeights(playerCategories) {
-            const baseWeights = {
-                'PRIME': 8,
-                'Muy Bueno': 16,
-                'Bueno': 22,
-                'Normal': 29,
-                'Malo': 25,
-            };
-            const available = Object.keys(baseWeights).filter(name => Array.isArray(playerCategories[name]) && playerCategories[name].length > 0);
-            if (available.length === 0) return {};
-            const total = available.reduce((sum, name) => sum + baseWeights[name], 0);
-            const weights = {};
-            available.forEach(name => { weights[name] = baseWeights[name] / total; });
-            return weights;
+            // Usar pesos configurables desde el panel admin (adminWeights)
+            try {
+                const source = (typeof adminWeights === 'object' && adminWeights) ? adminWeights : {
+                    'PRIME': 8,
+                    'Muy Bueno': 16,
+                    'Bueno': 22,
+                    'Normal': 29,
+                    'Malo': 25,
+                };
+                const available = Object.keys(source).filter(name => Array.isArray(playerCategories[name]) && playerCategories[name].length > 0);
+                if (available.length === 0) return {};
+                const total = available.reduce((sum, name) => sum + Math.max(0, Number(source[name]) || 0), 0);
+                const weights = {};
+                available.forEach(name => {
+                    const raw = Math.max(0, Number(source[name]) || 0);
+                    weights[name] = total > 0 ? raw / total : 0;
+                });
+                return weights;
+            } catch (_) {
+                // Fallback a pesos por defecto si algo falla
+                const baseWeights = { 'PRIME': 8, 'Muy Bueno': 16, 'Bueno': 22, 'Normal': 29, 'Malo': 25 };
+                const available = Object.keys(baseWeights).filter(name => Array.isArray(playerCategories[name]) && playerCategories[name].length > 0);
+                if (available.length === 0) return {};
+                const total = available.reduce((sum, name) => sum + baseWeights[name], 0);
+                const weights = {};
+                available.forEach(name => { weights[name] = baseWeights[name] / total; });
+                return weights;
+            }
         }
 
         function weightedChoice(weightMap) {
@@ -1108,6 +1419,7 @@
             if (!Number.isFinite(v)) v = 0;
             if (v % 5 !== 0) v = Math.ceil(v / 5) * 5; // a múltiplos de 5
             if (!socket || !roomCode) return;
+            try { playBid(); } catch(_) {}
             socket.emit('place_bid', { code: roomCode, value: v });
             const msg = document.getElementById('auction-msg');
             if (msg) msg.textContent = 'Puja enviada...';
@@ -1230,11 +1542,13 @@
             // Actualizar la interfaz para mostrar la posición actual
             setRoundTitle(positionName, 1, rounds);
             
-            // Si soy host, sincronizo con la sala y renderizo
+            // Si soy host, sincronizo con la sala y renderizo (ajustando precio efectivo)
             if (socket && isHost && roomCode) {
                 socket.emit('set_round', { code: roomCode, positionName, rounds });
-                const player = playersForCurrentPosition[currentPlayerIndex];
-                socket.emit('set_player', { code: roomCode, player, index: currentPlayerIndex + 1 });
+                const basePlayer = playersForCurrentPosition[currentPlayerIndex];
+                const playerAdj = { ...basePlayer, price: getEffectivePrice(basePlayer) };
+                playersForCurrentPosition[currentPlayerIndex] = playerAdj; // sincronizar local
+                socket.emit('set_player', { code: roomCode, player: playerAdj, index: currentPlayerIndex + 1 });
             }
             // Render local del host o single-player
             startNextPlayer();
@@ -1272,10 +1586,13 @@
             }
 
             const position = positions[currentPositionIndex];
-            const player = playersForCurrentPosition[currentPlayerIndex];
-            // Emitir al resto si soy el host
+            let player = playersForCurrentPosition[currentPlayerIndex];
+            // Emitir al resto si soy el host (ajustando precio efectivo)
             if (socket && isHost && roomCode) {
-                socket.emit('set_player', { code: roomCode, player, index: currentPlayerIndex + 1 });
+                const playerAdj = { ...player, price: getEffectivePrice(player) };
+                playersForCurrentPosition[currentPlayerIndex] = playerAdj;
+                player = playerAdj;
+                socket.emit('set_player', { code: roomCode, player: playerAdj, index: currentPlayerIndex + 1 });
             }
             
             if (!player) {
@@ -1295,15 +1612,15 @@
             const playerCard = document.getElementById('player-card');
             playerCard.classList.remove('is-revealed'); // Reiniciar la tarjeta
             // Controles: antes de revelar, solo Confirmar (si eres host), Siguiente oculto
-            const confirmBtnCtl = document.getElementById('confirm-button');
-            const nextBtnCtl = document.getElementById('next-round-button');
-            if (confirmBtnCtl) confirmBtnCtl.classList.toggle('hidden', !isHost);
-            if (nextBtnCtl) nextBtnCtl.classList.add('hidden');
+            const confirmBtn = document.getElementById('confirm-button');
+            const nextBtn = document.getElementById('next-round-button');
+            if (confirmBtn) confirmBtn.classList.toggle('hidden', !isHost);
+            if (nextBtn) nextBtn.classList.add('hidden');
             
             // Ocultar nombre y establecer el precio
             document.getElementById('player-name').textContent = '';
-            document.getElementById('price-display').textContent = `$${player.price}M`;
-            document.getElementById('back-price-display').textContent = `$${player.price}M`;
+            document.getElementById('price-display').textContent = `$${getEffectivePrice(player)}M`;
+            document.getElementById('back-price-display').textContent = `$${getEffectivePrice(player)}M`;
             
             // Obtener referencia a la imagen del jugador
             const playerPhoto = document.getElementById('player-photo');
@@ -1578,6 +1895,19 @@
                     updateOnlineUI();
                     renderParticipants();
                     renderTeamViewersBar();
+                    updateAdminVisibility();
+                    // Copiar código automáticamente y notificar
+                    try {
+                        const c = (roomCode || '').toUpperCase();
+                        const input = document.getElementById('join-code');
+                        if (input) input.value = c;
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(c).then(() => {
+                                const codeEl = document.getElementById('room-code') || document.getElementById('create-room');
+                                if (codeEl) showBadgeNear(codeEl, 'Codigo Copiado');
+                            }).catch(() => {});
+                        }
+                    } catch(_) {}
                 });
                 socket.on('room_joined', ({ code, participants: list }) => {
                     isHost = false;
@@ -1586,6 +1916,7 @@
                     participants = list || [];
                     updateOnlineUI();
                     renderParticipants();
+                    updateAdminVisibility();
                 });
                 socket.on('room_error', ({ message }) => {
                     const input = document.getElementById('join-code');
@@ -1606,6 +1937,8 @@
                     participants = list || [];
                     renderParticipants();
                     renderTeamViewersBar();
+                    // Recalcular CTA de oferta por si cambia a quién estamos viendo
+                    renderOfferCTA();
                     // Refrescar opciones de avatar según ocupados
                     renderAvatarChoices();
                     const avErr = document.getElementById('avatar-error');
@@ -1615,12 +1948,14 @@
                     if (code !== roomCode) return;
                     isHost = (hostId === socket.id);
                     updateOnlineUI();
+                    updateAdminVisibility();
                 });
                 socket.on('game_started', ({ code }) => {
                     if (code !== roomCode) return;
                     // Mostrar escenario de juego
                     inGame = true;
                     updateOnlineUI();
+                    updateAdminVisibility();
                     // Mercado inicia cerrado visualmente
                     setTransferMarket(false);
                     // Reiniciar estado de la partida y comenzar
@@ -1656,30 +1991,70 @@
                     setRoundTitle(serverPositionName, guestRoundIndex || 1, total);
                     hasPurchasedInThisPosition = false;
                 });
-                // Jugador definido por el host
                 socket.on('player_set', ({ player, index, totalRounds, positionName }) => {
-                    if (isHost) return; // el host no procesa eco
-                    // Renderizar el jugador actual recibido del servidor
-                    playersForCurrentPosition = [player];
-                    currentPlayerIndex = 0;
-                    lastBidderId = null;
-                    currentBid = 0;
-                    // Progreso: usar índice y total enviados por el servidor
-                    if (typeof totalRounds === 'number' && totalRounds > 0) serverRounds = totalRounds;
-                    if (typeof index === 'number' && index > 0) guestRoundIndex = Math.min(serverRounds || index, index);
-                    if (positionName) serverPositionName = positionName;
-                    const shownIndex = Math.max(1, guestRoundIndex || 1);
-                    const total = serverRounds || positions[currentPositionIndex]?.rounds || 1;
-                    setRoundTitle(serverPositionName || positions[currentPositionIndex]?.name || '', shownIndex, total);
-                    // Preparar tarjeta
-                    renderServerPlayer();
+                    // Desbloquear ruleta para todos (host e invitados) cuando se define nuevo jugador
+                    rouletteLocked = false;
+                    stopLocalTimer();
+                    // Habilitar UI de puja para nuevo jugador
+                    try {
+                        const buyBtn = document.getElementById('buy-button');
+                        const bidInput = document.getElementById('bid-input');
+                        const minus5 = document.getElementById('minus5');
+                        const plus5 = document.getElementById('plus5');
+                        if (buyBtn) buyBtn.disabled = false;
+                        if (bidInput) bidInput.disabled = false;
+                        if (minus5) minus5.disabled = false;
+                        if (plus5) plus5.disabled = false;
+                    } catch(_) {}
+                    // Invitados sincronizan el jugador y progresos desde servidor
+                    if (!isHost) {
+                        playersForCurrentPosition = [player];
+                        currentPlayerIndex = 0;
+                        lastBidderId = null;
+                        currentBid = 0;
+                        if (typeof totalRounds === 'number' && totalRounds > 0) serverRounds = totalRounds;
+                        if (typeof index === 'number' && index > 0) guestRoundIndex = Math.min(serverRounds || index, index);
+                        if (positionName) serverPositionName = positionName;
+                        const shownIndex = Math.max(1, guestRoundIndex || 1);
+                        const total = serverRounds || positions[currentPositionIndex]?.rounds || 1;
+                        setRoundTitle(serverPositionName || positions[currentPositionIndex]?.name || '', shownIndex, total);
+                        renderServerPlayer();
+                    }
+                    // Si el modal de ruleta está abierto, refrescar su contenido y la visibilidad del botón
+                    try {
+                        if (rouletteModalOpen) {
+                            const startBtn = document.getElementById('roulette-start');
+                            const eligibles = getEligibleParticipants();
+                            rouletteItems = eligibles.map(p => ({ id: p.id, name: p.name || p.id, avatar: p.avatar || '' }));
+                            preloadAvatars(rouletteItems);
+                            drawRouletteWheel(rouletteItems.length ? rouletteItems : [{name:'Sin elegibles'}]);
+                            const countEl = document.getElementById('roulette-legend-count');
+                            if (countEl) countEl.textContent = String(rouletteItems.length);
+                            if (startBtn) {
+                                const show = isHost && (rouletteItems.length > 0) && !rouletteLocked;
+                                startBtn.classList.toggle('hidden', !show);
+                                startBtn.disabled = !show;
+                                startBtn.classList.toggle('opacity-50', startBtn.disabled);
+                            }
+                        }
+                    } catch(_) {}
                 });
-                // Actualización de puja
+                // Actualización de puja (esperar a que termine la ruleta si está girando)
                 socket.on('bid_update', ({ currentBid: bid, bidderId }) => {
-                    currentBid = Number(bid) || 0;
-                    lastBidderId = bidderId || null;
-                    const player = playersForCurrentPosition[currentPlayerIndex];
-                    updateAuctionUI(player);
+                    runAfterSpin(() => {
+                        currentBid = Number(bid) || 0;
+                        lastBidderId = bidderId || null;
+                        const player = playersForCurrentPosition[currentPlayerIndex];
+                        updateAuctionUI(player);
+                    }, 100);
+                });
+                // Temporizador de puja sincronizado
+                socket.on('timer_update', ({ endAt }) => {
+                    if (endAt && Number(endAt) > Date.now()) {
+                        startLocalTimer(Number(endAt));
+                    } else {
+                        stopLocalTimer();
+                    }
                 });
                 // Presupuestos
                 socket.on('budget_update', ({ budgets }) => {
@@ -1694,86 +2069,205 @@
                         updateTeamUI();
                     }
                 });
-                // Ganador confirmado por el host
-                socket.on('winner_confirmed', ({ winnerId, price, player, positionName }) => {
-                    const msg = document.getElementById('auction-msg');
-                    if (winnerId === currentUser.id) {
-                        // Marcar compra localmente
-                        hasPurchasedInThisPosition = true;
-                        registerPurchase(positionName, player, price);
-                        msg && (msg.textContent = `¡Ganaste a ${player.name} por $${price}M!`);
-                    } else {
-                        msg && (msg.textContent = `${player.name} adjudicado por $${price}M`);
-                        // Registrar compra en el mapa de equipos del ganador remoto
-                        ensureTeamMap(winnerId);
-                        teamsMap[winnerId][positionName] = { name: player.name, price: price, photo: player.photo };
-                        // Si estamos viendo a ese usuario, refrescar UI
-                        if (viewingUserId === winnerId) updateTeamUI();
+                // Ruleta: elegibles
+                socket.on('roulette_update', ({ count, positionName }) => {
+                    rouletteEligibleCount = Number(count) || 0;
+                    const badge = document.getElementById('roulette-eligible-badge');
+                    if (badge) badge.textContent = String(Math.max(0, rouletteEligibleCount));
+                    const countEl = document.getElementById('roulette-count');
+                    if (countEl) countEl.textContent = String(Math.max(0, rouletteEligibleCount));
+                    const spinBtnTop = document.getElementById('spin-roulette-top');
+                    if (spinBtnTop) {
+                        // solo estado visual; no deshabilitar para permitir chequeo en click
+                        const vis = (rouletteEligibleCount <= 1);
+                        try { spinBtnTop.disabled = false; } catch(_) {}
+                        spinBtnTop.classList.toggle('opacity-50', vis);
+                        spinBtnTop.classList.toggle('cursor-not-allowed', vis);
                     }
-                    // Mantener la revelación en pantalla para todos
-                    revealPlayer();
+                    const spinBtnSide = document.getElementById('spin-roulette');
+                    if (spinBtnSide) {
+                        const vis = (rouletteEligibleCount <= 1);
+                        try { spinBtnSide.disabled = false; } catch(_) {}
+                        spinBtnSide.classList.toggle('opacity-50', vis);
+                        spinBtnSide.classList.toggle('cursor-not-allowed', vis);
+                    }
+                    // Actualizar botón de inicio dentro del modal si está abierto
+                    const startBtn = document.getElementById('roulette-start');
+                    if (startBtn) {
+                        const show = isHost && (rouletteEligibleCount > 1) && !rouletteLocked;
+                        startBtn.classList.toggle('hidden', !show);
+                        startBtn.disabled = !show;
+                        startBtn.classList.toggle('opacity-50', startBtn.disabled);
+                        startBtn.classList.toggle('cursor-default', startBtn.disabled);
+                    }
+                });
+                // Ruleta: giro ejecutado (visible para todos)
+                socket.on('roulette_spun', ({ winnerId, positionName, price }) => {
+                    const winner = (participants||[]).find(p => p.id === winnerId);
+                    const modal = document.getElementById('roulette-modal');
+                    const isOpen = modal && !modal.classList.contains('hidden');
+                    const payload = {
+                        spinning: true,
+                        winner: winner ? { id: winner.id, name: winner.name, avatar: winner.avatar } : { id: winnerId, name: winnerId, avatar: '' },
+                        positionName,
+                        price,
+                    };
+                    if (!isOpen) {
+                        openRouletteModal(payload);
+                    } else {
+                        // ya está abierto: solo girar y mostrar al final
+                        // reconstruir items para asegurar alineación correcta con el ganador
+                        const eligibles = getEligibleParticipants();
+                        rouletteItems = eligibles.map(p => ({ id: p.id, name: p.name || p.id, avatar: p.avatar || '' }));
+                        preloadAvatars(rouletteItems);
+                        drawRouletteWheel(rouletteItems.length ? rouletteItems : [{name:'Sin elegibles'}]);
+                        spinRouletteToWinner(winnerId);
+                        const result = document.getElementById('roulette-result');
+                        const nameEl = document.getElementById('roulette-winner-name');
+                        const subEl = document.getElementById('roulette-winner-sub');
+                        const avEl = document.getElementById('roulette-winner-avatar');
+                        setTimeout(() => {
+                            if (result) result.classList.remove('hidden');
+                            if (nameEl) nameEl.textContent = payload.winner.name || 'Ganador';
+                            if (subEl) subEl.textContent = positionName ? `Compra en ${positionName} por ${formatM(price||0)}` : '';
+                            if (avEl) avEl.src = payload.winner.avatar || '';
+                        }, 5200);
+                    }
+                });
+                // Ganador confirmado por el host (UI solo tras terminar el giro)
+                socket.on('winner_confirmed', ({ winnerId, price, player, positionName }) => {
+                    stopLocalTimer();
+                    runAfterSpin(() => {
+                        rouletteLocked = true; // bloquear ruleta tras adjudicar/revelar
+                        const msg = document.getElementById('auction-msg');
+                        if (winnerId === currentUser.id) {
+                            // Marcar compra localmente
+                            hasPurchasedInThisPosition = true;
+                            registerPurchase(positionName, player, price);
+                            msg && (msg.textContent = `¡Ganaste a ${player.name} por $${price}M!`);
+                        } else {
+                            // Registrar compra en el mapa de equipos del ganador remoto
+                            ensureTeamMap(winnerId);
+                            teamsMap[winnerId][positionName] = { name: player.name, price: price, photo: player.photo };
+                            // Si estamos viendo a ese usuario, refrescar UI
+                            if (viewingUserId === winnerId) updateTeamUI();
+                        }
+                        // Mostrar resultado en el modal si corresponde
+                        try {
+                            const res = document.getElementById('roulette-result');
+                            const nameEl = document.getElementById('roulette-winner-name');
+                            const subEl = document.getElementById('roulette-winner-sub');
+                            const avEl = document.getElementById('roulette-winner-avatar');
+                            const winner = (participants||[]).find(p => p.id === winnerId);
+                            if (res && nameEl && subEl && avEl) {
+                                res.classList.remove('hidden');
+                                nameEl.textContent = (winner && winner.name) ? winner.name : (winnerId || 'Ganador');
+                                subEl.textContent = positionName ? `Compra en ${positionName} por ${formatM(price||0)}` : '';
+                                avEl.src = winner && winner.avatar ? winner.avatar : '';
+                            }
+                        } catch(_) {}
+                        // Revelar jugador
+                        revealPlayer();
+                    });
                 });
                 // Revelación manual (salto): sincronizar con todos, usando payload si viene
                 socket.on('player_revealed', ({ player: payloadPlayer } = {}) => {
-                    if (payloadPlayer) revealSpecificPlayer(payloadPlayer); else revealPlayer();
+                    rouletteLocked = true; // bloquear ruleta al revelar/saltar
+                    const doReveal = () => {
+                        if (payloadPlayer) revealSpecificPlayer(payloadPlayer); else revealPlayer();
+                    };
+                    // Deshabilitar UI de puja tras revelar
+                    try {
+                        const buyBtn = document.getElementById('buy-button');
+                        const bidInput = document.getElementById('bid-input');
+                        const minus5 = document.getElementById('minus5');
+                        const plus5 = document.getElementById('plus5');
+                        if (buyBtn) buyBtn.disabled = true;
+                        if (bidInput) bidInput.disabled = true;
+                        if (minus5) minus5.disabled = true;
+                        if (plus5) plus5.disabled = true;
+                    } catch(_) {}
+                    if (rouletteModalOpen && Date.now() < rouletteSpinEndsAt) {
+                        const delay = Math.max(0, rouletteSpinEndsAt - Date.now() + 200);
+                        setTimeout(doReveal, delay);
+                    } else {
+                        doReveal();
+                    }
                 });
 
                 // Mercado: sincronización
                 socket.on('market_state', ({ open, reason }) => {
                     console.log('[client] market_state', { open, reason });
                     setTransferMarket(!!open);
-                    // Si se abre el mercado y aún estamos en lobby, mostrar escenario de juego
-                    if (open && !inGame) {
-                        inGame = true;
-                        updateOnlineUI();
-                    }
+                    // No cambiar automáticamente el participante seleccionado ni la barra de viewers
+                    if (open && !inGame) { inGame = true; updateOnlineUI(); }
                     renderOfferCTA();
                 });
-                // Click en pill (solo host y en juego)
-                const pill = document.getElementById('transfer-market-pill');
-                if (pill) {
-                    pill.addEventListener('click', () => {
-                        if (!isHost || !socket || !roomCode) return;
-                        const nextState = !transferMarketOpen;
-                        // Optimistic update for host
-                        setTransferMarket(nextState);
-                        socket.emit('market_state', { code: roomCode, open: nextState, reason: 'manual' });
-                    });
-                }
-
-                // Ofertas del mercado (recepción)
-                socket.on('transfer_offer', (offer) => {
-                    console.log('[client] transfer_offer received', offer);
-                    if (!offer) return;
-                    // Solo el destinatario ve el modal de acciones
-                    if (offer.to === currentUser.id) {
-                        showOfferReceivedModal(offer);
-                    } else if (offer.from === currentUser.id) {
-                        // Feedback simple al emisor
-                        const msg = document.getElementById('auction-msg');
-                        msg && (msg.textContent = 'Oferta enviada. Esperando respuesta...');
-                        setTimeout(() => { if (msg && msg.textContent.includes('Oferta enviada')) msg.textContent = ''; }, 2000);
-                    }
+                // Cierre de ruleta sincronizado por host
+                socket.on('roulette_close', () => {
+                    try { closeRouletteModal(); } catch(_) {}
                 });
-                socket.on('transfer_offer_update', (offer) => {
-                    console.log('[client] transfer_offer_update received', offer);
-                    updateOfferModal(offer);
+                // Apertura/cierre de ruleta enviado por el host
+                socket.on('roulette_modal', ({ open }) => {
+                    try {
+                        if (open) {
+                            openRouletteModal({ spinning: false });
+                        } else {
+                            closeRouletteModal();
+                        }
+                    } catch(_) {}
+                });
+                // Recepción de ofertas: mostrar a todos, activar acciones solo en el destinatario
+                socket.on('transfer_offer', (offer) => {
+                    try {
+                        console.log('[client] transfer_offer received', offer);
+                        if (!offer) return;
+                        const isRecipient = !!offer.to && offer.to === (currentUser && currentUser.id);
+                        if (typeof showOfferReceivedModal === 'function') showOfferReceivedModal(offer, !isRecipient);
+                    } catch (e) { console.warn('transfer_offer handler error', e); }
+                });
+                // Resultado de oferta (aceptada / rechazada / contraoferta): mostrar a todos y cerrar modales
+                socket.on('transfer_offer_update', ({ action, offer }) => {
+                    try {
+                        const msg = document.getElementById('auction-msg');
+                        // Cerrar cualquier modal relacionado en todos
+                        try { closeOfferReceivedModalSimple(); } catch(_) {}
+                        try { closeOfferModalSimple(); } catch(_) {}
+                        if (action === 'accept') {
+                            msg && (msg.textContent = 'Oferta aceptada.');
+                            showToast('Oferta aceptada', 'success');
+                            try { playAccept(); } catch(_) {}
+                        } else if (action === 'reject') {
+                            msg && (msg.textContent = 'Oferta rechazada.');
+                            showToast('Oferta rechazada', 'info');
+                            try { playReject(); } catch(_) {}
+                        } else if (action === 'counter') {
+                            msg && (msg.textContent = 'Contraoferta enviada.');
+                            showToast('Contraoferta enviada', 'info');
+                        } else {
+                            msg && (msg.textContent = 'Actualización de oferta.');
+                            showToast('Actualización de oferta', 'info');
+                        }
+                        if (msg) setTimeout(() => { msg.textContent = ''; }, 2500);
+                    } catch (e) { console.warn('transfer_offer_update handler error', e); }
                 });
                 // Sincronización de equipos (tras compras o intercambios)
                 socket.on('teams_update', ({ users }) => {
                     if (!users) return;
-                    Object.entries(users).forEach(([uid, teamObj]) => {
-                        ensureTeamMap(uid);
-                        // Reemplazar por el estado exacto del servidor
-                        teamsMap[uid] = { ...teamObj };
-                        // Si es mi propio equipo, sincronizar objeto local 'team'
-                        if (uid === currentUser.id) {
-                            // Vaciar y copiar propiedades para mantener referencia si hay bindings
-                            Object.keys(team).forEach(k => { delete team[k]; });
-                            Object.entries(teamObj || {}).forEach(([k,v]) => { team[k] = v; });
-                        }
+                    runAfterSpin(() => {
+                        Object.entries(users).forEach(([uid, teamObj]) => {
+                            ensureTeamMap(uid);
+                            // Reemplazar por el estado exacto del servidor
+                            teamsMap[uid] = { ...teamObj };
+                            // Si es mi propio equipo, sincronizar objeto local 'team'
+                            if (uid === currentUser.id) {
+                                // Vaciar y copiar propiedades para mantener referencia si hay bindings
+                                Object.keys(team).forEach(k => { delete team[k]; });
+                                Object.entries(teamObj || {}).forEach(([k,v]) => { team[k] = v; });
+                            }
+                        });
+                        updateTeamUI();
                     });
-                    updateTeamUI();
                 });
             }
             // Lobby / Online controls
@@ -1786,6 +2280,41 @@
             if (createBtn) createBtn.addEventListener('click', createRoom);
             if (joinBtn) joinBtn.addEventListener('click', joinRoom);
             if (startBtn) startBtn.addEventListener('click', startGame);
+            // Crear panel admin
+            try { renderAdminPanel(); updateAdminVisibility(); } catch(_) {}
+            // Crear botón de ruleta flotante dentro del contenedor central (#game-container)
+            const gameContainer = document.getElementById('game-container');
+            if (gameContainer) {
+                const topBar = document.createElement('div');
+                topBar.className = 'absolute left-1/2 -translate-x-1/2 top-3 z-30';
+                topBar.innerHTML = `
+                    <button id="spin-roulette-top" class="hidden inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg transition-all shadow border border-emerald-400/40">
+                        Tirar ruleta
+                        <span id="roulette-eligible-badge" class="ml-1 text-xs bg-white/10 border border-white/20 rounded px-1.5 py-0.5">0</span>
+                    </button>`;
+                gameContainer.appendChild(topBar);
+                const spinTop = document.getElementById('spin-roulette-top');
+                if (spinTop) spinTop.addEventListener('click', () => {
+                    if (!isHost || !socket || !roomCode) return;
+                    if ((rouletteEligibleCount||0) <= 1) {
+                        const msg = document.getElementById('auction-msg');
+                        if (msg) { msg.textContent = 'Se necesitan al menos 2 elegibles para usar la ruleta.'; setTimeout(()=>{ msg.textContent=''; }, 2500); }
+                        return;
+                    }
+                    try { playClick(); } catch(_) {}
+                    openRouletteModal({ spinning: false });
+                    socket.emit('roulette_modal', { code: roomCode, open: true });
+                });
+                // Listener global de clicks para botones (sonido genérico), evitando duplicados
+                document.addEventListener('click', (ev) => {
+                    const btn = ev.target && ev.target.closest && ev.target.closest('button');
+                    if (!btn) return;
+                    const id = btn.id || '';
+                    const exclude = new Set(['buy-button','offer-accept','offer-reject','offer-send','offer-close','offer-received-close','confirm-button','next-round-button','spin-roulette-top','spin-roulette','roulette-start']);
+                    if (exclude.has(id)) return;
+                    try { playClick(); } catch(_) {}
+                });
+            }
             // Render dinámico de avatares con estados (seleccionado / usado / disponible)
             function renderAvatarChoices() {
                 if (!avatarWrap) return;
@@ -1829,6 +2358,41 @@
             setTransferMarket(false);
             renderParticipants();
             renderTeamViewersBar();
+            // Delegated click handler for the transfer market pill to avoid missing bindings
+            document.addEventListener('click', (ev) => {
+                const btn = ev.target && ev.target.closest && ev.target.closest('#transfer-market-pill');
+                if (!btn) return;
+                if (!socket || !roomCode) return;
+                // Solo el anfitrión puede cambiar el estado del mercado.
+                // Invitados: no apliques cambios locales; espera sincronización del servidor.
+                if (!isHost) {
+                    console.warn('[client] Solo el anfitrión puede abrir/cerrar el mercado. Espera a que el host lo active.');
+                    const msg = document.getElementById('auction-msg');
+                    if (msg) {
+                        msg.textContent = 'Solo el anfitrión puede abrir/cerrar el mercado.';
+                        setTimeout(() => { if (msg && msg.textContent === 'Solo el anfitrión puede abrir/cerrar el mercado.') msg.textContent = ''; }, 2000);
+                    }
+                    return;
+                }
+                const nextState = !transferMarketOpen;
+                console.log('[client] pill click (delegated, host) -> toggling', { from: transferMarketOpen, to: nextState, roomCode });
+                // Para el anfitrión podemos hacer UI optimista y el servidor lo confirmará a todos
+                setTransferMarket(nextState);
+                socket.emit('market_state', { code: roomCode, open: nextState, reason: 'manual' });
+            });
+            // Delegated click for Offer button to avoid timing issues
+            document.addEventListener('click', (ev) => {
+                const offerBtn = ev.target && ev.target.closest && ev.target.closest('#open-offer-modal');
+                if (!offerBtn) return;
+                ev.preventDefault();
+                try {
+                    if (typeof openOfferModalSimple === 'function') {
+                        openOfferModalSimple();
+                    } else {
+                        console.warn('openOfferModalSimple no definido');
+                    }
+                } catch (e) { console.warn('Offer button handler error', e); }
+            });
             // Host-only confirmar
             const confirmBtn = document.getElementById('confirm-button');
             if (confirmBtn) confirmBtn.addEventListener('click', () => {
@@ -1854,7 +2418,8 @@
                 // Se reactivará implícitamente al mostrar Next; si hubiera error, reactivamos tras breve tiempo
                 setTimeout(() => { confirmBtn.disabled = false; }, 1200);
             });
-            document.getElementById('next-round-button').addEventListener('click', nextPlayer);
+            const nextRoundBtn = document.getElementById('next-round-button');
+            if (nextRoundBtn) nextRoundBtn.addEventListener('click', () => { try { playNext(); } catch(_) {}; nextPlayer(); });
             // Listeners subasta
             const buyBtn = document.getElementById('buy-button');
             if (buyBtn) buyBtn.addEventListener('click', placeBid);
@@ -1898,7 +2463,7 @@
             // No iniciar partidas automáticamente; se inicia desde lobby
         });
     </script>
-    <!-- Modal de Ofertas (Mercado de Fichajes) -->
+    <!-- Modal de Ofertas (multi-selección y visual) -->
     <div id="offer-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
         <div class="absolute inset-0 bg-black/60"></div>
         <div class="relative bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-2xl mx-4 text-white max-h-[85vh] overflow-y-auto">
@@ -1906,57 +2471,49 @@
                 <h3 class="text-xl font-bold">Crear oferta</h3>
                 <button id="offer-close" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Cerrar</button>
             </div>
-            <div class="text-sm text-gray-300 mb-3">Selecciona jugadores del rival y empareja con tus jugadores de la misma zona. Agrega dinero si quieres.</div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
-                    <div class="font-semibold mb-2">Jugadores del rival</div>
-                    <div id="offer-opponent-list" class="space-y-2"></div>
+                    <div class="font-semibold mb-2">Rival: selecciona 1 o más</div>
+                    <div id="offer-opponent-list" class="grid grid-cols-2 gap-2"></div>
                 </div>
                 <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
-                    <div class="font-semibold mb-2">Tus jugadores (según zona)</div>
-                    <div id="offer-mine-list" class="space-y-2"></div>
+                    <div class="font-semibold mb-2">Empareja con tus jugadores (misma zona)</div>
+                    <div id="offer-cart" class="space-y-2"></div>
                 </div>
             </div>
-            <!-- Carrito de intercambios -->
-            <div class="mt-4 bg-gray-800/50 rounded-xl p-3 border border-gray-700">
-                <div class="font-semibold mb-2">Carrito de intercambios</div>
-                <div id="offer-cart" class="space-y-2"></div>
-            </div>
-            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
-                    <div class="font-semibold mb-2">Dinero que ofreces</div>
-                    <input id="offer-cash-mine" type="number" min="0" step="5" value="0" class="w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                <div>
+                    <div class="font-semibold mb-1">Dinero que ofreces</div>
+                    <input id="offer-cash-mine" type="number" min="0" step="5" value="0" class="w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 text-white" />
                 </div>
-                <div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">
-                    <div class="font-semibold mb-2">Dinero que pides</div>
-                    <input id="offer-cash-theirs" type="number" min="0" step="5" value="0" class="w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                <div>
+                    <div class="font-semibold mb-1">Dinero que pides</div>
+                    <input id="offer-cash-theirs" type="number" min="0" step="5" value="0" class="w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-3 py-2 text-white" />
                 </div>
             </div>
-            <div id="offer-summary" class="mt-4 text-sm text-gray-300"></div>
             <div class="mt-4 flex items-center justify-end gap-2">
                 <button id="offer-cancel" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">Cancelar</button>
                 <button id="offer-send" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 font-bold">Enviar oferta</button>
             </div>
         </div>
     </div>
-    <!-- Modal de Oferta Recibida -->
+    <!-- Modal de Oferta Recibida (simple) -->
     <div id="offer-received-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
         <div class="absolute inset-0 bg-black/60"></div>
-        <div class="relative bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-2xl mx-4 text-white max-h-[85vh] overflow-y-auto">
+        <div class="relative bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md mx-4 text-white">
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-xl font-bold">Oferta de intercambio recibida</h3>
+                <h3 class="text-xl font-bold">Oferta recibida</h3>
                 <button id="offer-received-close" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Cerrar</button>
             </div>
             <div id="offer-received-content" class="text-sm text-gray-200"></div>
             <div class="mt-4 flex items-center justify-end gap-2">
-                <button id="offer-reject" class="px-4 py-2 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-white">Rechazar</button>
-                <button id="offer-counter" class="px-4 py-2 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-white">Contraofertar</button>
-                <button id="offer-accept" class="px-4 py-2 rounded-lg border border-emerald-600 text-emerald-300 hover:bg-emerald-900/30 font-semibold">Aceptar</button>
+                <button id="offer-reject" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">Rechazar</button>
+                <button id="offer-accept" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 font-bold">Aceptar</button>
             </div>
         </div>
     </div>
     <script>
-        // ===== Lógica del Modal de Ofertas =====
+        // ===== Modal de Ofertas (simple) =====
         function groupForPosition(posKey) {
             if (!posKey) return 'other';
             if (posKey === 'Portero') return 'gk';
@@ -1966,254 +2523,653 @@
             return 'other';
         }
 
+        // Estado del modal (multi)
         let offerState = { targetUserId: null, pairs: [], cashMine: 0, cashTheirs: 0 };
 
-        function openOfferModal() {
-            if (!transferMarketOpen || !viewingUserId || viewingUserId === currentUser.id) return;
-            offerState = { targetUserId: viewingUserId, pairs: [], cashMine: 0, cashTheirs: 0 };
-            const modal = document.getElementById('offer-modal');
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-            // Render lists
-            renderOfferLists();
-            attachOfferModalListeners();
-            renderOfferCart();
-            refreshOfferSummary();
+        function zoneBadgeText(group) {
+            if (group === 'gk') return 'GK';
+            if (group === 'def') return 'DEF';
+            if (group === 'mid') return 'MID';
+            if (group === 'att') return 'ATT';
+            return '';
         }
 
-        function attachOfferModalListeners() {
-            const close = document.getElementById('offer-close');
-            const cancel = document.getElementById('offer-cancel');
-            const send = document.getElementById('offer-send');
-            const cashMine = document.getElementById('offer-cash-mine');
-            const cashTheirs = document.getElementById('offer-cash-theirs');
-            close.onclick = closeOfferModal;
-            cancel.onclick = closeOfferModal;
-            send.onclick = sendOffer;
-            // Limitar por presupuesto propio
-            cashMine.setAttribute('max', String(Math.max(0, userBudget)));
-            cashMine.oninput = () => {
-                let v = Math.max(0, Number(cashMine.value) || 0);
-                if (v > userBudget) v = userBudget;
-                // mantener múltiplos de 5
-                if (v % 5 !== 0) v = Math.round(v / 5) * 5;
-                offerState.cashMine = v;
-                cashMine.value = String(v);
-                refreshOfferSummary();
-            };
-            cashTheirs.oninput = () => { offerState.cashTheirs = Math.max(0, Number(cashTheirs.value)||0); refreshOfferSummary(); };
+        function validateOfferState() {
+            try {
+                const send = document.getElementById('offer-send');
+                let ok = true;
+                const seenMine = new Set();
+                for (const p of (offerState.pairs||[])) {
+                    if (!p || !p.opponentSlot || !p.mySlot) { ok = false; break; }
+                    if (seenMine.has(p.mySlot)) { ok = false; break; }
+                    seenMine.add(p.mySlot);
+                }
+                if (!offerState.pairs || offerState.pairs.length === 0) ok = false;
+                if (send) {
+                    send.disabled = !ok;
+                    send.classList.toggle('opacity-50', !ok);
+                    send.classList.toggle('cursor-not-allowed', !ok);
+                }
+                return ok;
+            } catch(_) { return false; }
         }
 
-        function renderOfferLists() {
-            const oppList = document.getElementById('offer-opponent-list');
-            const mineList = document.getElementById('offer-mine-list');
+        function renderOpponentList() {
+            const wrap = document.getElementById('offer-opponent-list');
+            if (!wrap) return;
             const oppTeam = teamsMap[offerState.targetUserId] || {};
-            // Rival: botones toggle (seleccionar múltiples). Marcar activos si ya están en pares
-            oppList.innerHTML = Object.entries(oppTeam).filter(([k,v]) => !!v).map(([slot, data]) => {
-                const g = groupForPosition(slot);
+            const cards = Object.entries(oppTeam).filter(([k,v]) => !!v).map(([slot, data]) => {
                 const active = offerState.pairs.some(p => p.opponentSlot === slot);
-                return `<button class="w-full flex items-center gap-3 p-2 rounded-lg ${active?'bg-gray-800 border-emerald-600':'bg-gray-900/40'} border ${active?'':'border-gray-800'} hover:bg-gray-800" data-slot="${slot}" data-group="${g}">
-                    <div class="team-slot__photo" style="width:36px;height:36px;border-radius:8px;overflow:hidden;">
-                        <img src="${data.photo}" alt="${data.name}" style="width:100%;height:100%;object-fit:contain;"/>
+                const g = groupForPosition(slot);
+                return `
+                <button class="group relative rounded-lg border ${active?'border-emerald-500 bg-emerald-500/10':'border-gray-700 bg-gray-900/40'} p-2 text-left hover:border-emerald-400" data-slot="${slot}" data-group="${g}">
+                    <div class="w-full aspect-square rounded-md overflow-hidden border border-gray-700 bg-black/30">
+                        <img src="${data.photo}" alt="${data.name}" class="w-full h-full object-contain"/>
                     </div>
-                    <div class="flex-1 text-left">
-                        <div class="text-white text-sm font-semibold">${data.name}</div>
-                        <div class="text-xs text-gray-400">${slot}</div>
+                    <div class="mt-1 text-xs text-white font-semibold truncate" title="${data.name}">${data.name}</div>
+                    <div class="flex items-center justify-between">
+                        <div class="text-[10px] text-gray-400">${slot}</div>
+                        <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-700/70 text-gray-200">${zoneBadgeText(g)}</span>
                     </div>
-                    <div class="text-xs ${active?'text-emerald-400':'text-gray-400'}">${active?'Seleccionado':'Agregar'}</div>
+                    <div class="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded ${active?'bg-emerald-600 text-white':'bg-gray-700 text-gray-200'}">${active?'✓':'+'}</div>
                 </button>`;
             }).join('');
-            // Siempre mostrar tus jugadores con foto; si no hay selección del rival, indicar que selecciones primero
-            const myTeam = teamsMap[currentUser.id] || team;
-            const anySelected = offerState.pairs.length > 0;
-            const myCards = Object.entries(myTeam).filter(([k,v]) => !!v).map(([slot, data]) => {
-                return `<div class="flex items-center gap-3 p-2 rounded-lg ${anySelected?'bg-gray-900/40 hover:bg-gray-800':'bg-gray-900/20'} border border-gray-800 opacity-${anySelected? '100':'60'}">
-                    <div class="team-slot__photo" style="width:36px;height:36px;border-radius:8px;overflow:hidden;">
-                        <img src="${data.photo}" alt="${data.name}" style="width:100%;height:100%;object-fit:contain;"/>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-white text-sm font-semibold truncate">${data.name}</div>
-                        <div class="text-xs text-gray-400">${slot}</div>
-                    </div>
-                </div>`;
-            }).join('');
-            mineList.innerHTML = `${!anySelected ? '<div class="text-gray-400 text-xs mb-2">Selecciona jugadores del rival para elegir a cuál de tus jugadores ofreces a cambio.</div>' : ''}
-                <div class="space-y-2">${myCards || '<div class="text-gray-400 text-sm">No tienes jugadores en tu equipo aún.</div>'}</div>`;
-            oppList.querySelectorAll('button').forEach(btn => {
+            wrap.innerHTML = cards || '<div class="text-gray-400 text-sm">El rival no tiene jugadores aún.</div>';
+            wrap.querySelectorAll('button[data-slot]').forEach(btn => {
                 btn.onclick = () => {
                     const slot = btn.getAttribute('data-slot');
                     const group = btn.getAttribute('data-group');
-                    // toggle
-                    const idx = offerState.pairs.findIndex(p => p.opponentSlot === slot);
-                    if (idx >= 0) {
-                        offerState.pairs.splice(idx,1);
+                    const i = offerState.pairs.findIndex(p => p.opponentSlot === slot);
+                    if (i >= 0) {
+                        offerState.pairs.splice(i,1);
                     } else {
                         offerState.pairs.push({ opponentSlot: slot, mySlot: null, group });
                     }
-                    renderOfferLists();
+                    renderOpponentList();
                     renderOfferCart();
-                    refreshOfferSummary();
+                    validateOfferState();
                 };
             });
         }
 
         function renderOfferCart() {
             const cart = document.getElementById('offer-cart');
-            const oppTeam = teamsMap[offerState.targetUserId] || {};
+            if (!cart) return;
+            if (!offerState.pairs.length) { cart.innerHTML = '<div class="text-gray-400 text-sm">No hay selecciones aún.</div>'; return; }
             const myTeam = teamsMap[currentUser.id] || team;
-            if (!offerState.pairs.length) {
-                cart.innerHTML = '<div class="text-gray-400 text-sm">No hay intercambios seleccionados.</div>';
-                return;
-            }
+            const oppTeam = teamsMap[offerState.targetUserId] || {};
+            const selectedMine = new Set((offerState.pairs||[]).map((p,i) => p && p.mySlot).filter(Boolean));
             cart.innerHTML = offerState.pairs.map((p, idx) => {
                 const opp = oppTeam[p.opponentSlot];
+                // Opciones propias filtradas por grupo
                 const options = Object.entries(myTeam).filter(([k,v]) => !!v && groupForPosition(k) === p.group);
-                const optionsHtml = ['<option value="">— Selecciona tu jugador —</option>'].concat(options.map(([slot, data]) => `<option value="${slot}" ${p.mySlot===slot?'selected':''}>${data.name} (${slot})</option>`)).join('');
+                const gallery = options.map(([slot, data]) => {
+                    const usedByOther = selectedMine.has(slot) && p.mySlot !== slot;
+                    const baseCls = p.mySlot===slot ? 'border-emerald-500 bg-emerald-500/10' : 'border-gray-700 bg-gray-900/30';
+                    const disCls = usedByOther ? 'opacity-40 cursor-not-allowed' : '';
+                    return `
+                    <button class="group w-16 flex flex-col items-center gap-1 p-1 rounded border ${baseCls} ${disCls} hover:border-emerald-400" data-pair="${idx}" data-select-slot="${slot}" ${usedByOther?'data-disabled="1"':''}>
+                        <div class="w-14 h-14 rounded overflow-hidden border border-gray-700 bg-black/30">
+                            <img src="${data.photo}" alt="${data.name}" class="w-full h-full object-contain"/>
+                        </div>
+                        <div class="text-[10px] text-white font-semibold text-center truncate w-full" title="${data.name}">${data.name}</div>
+                        <div class="flex items-center gap-1">
+                            <div class="text-[9px] text-gray-400">${slot}</div>
+                            <span class="text-[8px] font-bold px-1 rounded bg-gray-700/70 text-gray-200">${zoneBadgeText(p.group)}</span>
+                        </div>
+                    </button>`;
+                }).join('');
                 return `
-                <div class="flex items-center gap-3 p-2 rounded-lg bg-gray-900/40 border border-gray-800">
-                    <div class="team-slot__photo" style="width:36px;height:36px;border-radius:8px;overflow:hidden;">
-                        <img src="${opp?.photo||''}" alt="${opp?.name||''}" style="width:100%;height:100%;object-fit:contain;"/>
+                <div class="p-2 rounded-lg bg-gray-900/40 border border-gray-800">
+                    <div class="flex items-center gap-2">
+                        <div class="w-10 h-10 rounded overflow-hidden border border-gray-700 bg-black/30">
+                            <img src="${opp?.photo||''}" alt="${opp?.name||''}" class="w-full h-full object-contain"/>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-white text-xs font-semibold truncate">${opp?.name||'?'} <span class="text-gray-400">(${p.opponentSlot})</span></div>
+                            <div class="text-[10px] text-gray-400">Elige tu jugador de la misma zona</div>
+                        </div>
+                        <button data-remove="${idx}" class="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs">Quitar</button>
                     </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-white text-sm font-semibold truncate">${opp?.name||'?'} <span class="text-gray-400">(${p.opponentSlot})</span></div>
-                        <select data-index="${idx}" class="mt-1 w-full bg-gray-900/70 border border-gray-700/60 rounded-lg px-2 py-1 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">${optionsHtml}</select>
+                    <div class="mt-2 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                        ${gallery || '<div class="text-gray-400 text-xs">No tienes jugadores en esta zona.</div>'}
                     </div>
-                    <button data-remove="${idx}" class="px-2 py-1 rounded bg-red-600 hover:bg-red-700 text-white text-xs">Quitar</button>
                 </div>`;
             }).join('');
-            cart.querySelectorAll('select').forEach(sel => {
-                sel.onchange = () => {
-                    const i = Number(sel.getAttribute('data-index'));
-                    const val = sel.value;
-                    if (offerState.pairs[i]) offerState.pairs[i].mySlot = val || null;
-                    refreshOfferSummary();
+            cart.querySelectorAll('button[data-select-slot]').forEach(btn => {
+                btn.onclick = () => {
+                    if (btn.getAttribute('data-disabled') === '1') return;
+                    const i = Number(btn.getAttribute('data-pair'));
+                    const slot = btn.getAttribute('data-select-slot');
+                    offerState.pairs[i].mySlot = slot;
+                    renderOfferCart();
+                    validateOfferState();
                 };
             });
             cart.querySelectorAll('button[data-remove]').forEach(btn => {
                 btn.onclick = () => {
                     const i = Number(btn.getAttribute('data-remove'));
                     offerState.pairs.splice(i,1);
-                    renderOfferLists();
+                    renderOpponentList();
                     renderOfferCart();
-                    refreshOfferSummary();
+                    validateOfferState();
                 };
             });
         }
 
-        function refreshOfferSummary() {
-            const sum = document.getElementById('offer-summary');
-            const oppTeam = teamsMap[offerState.targetUserId] || {};
-            const myTeam = teamsMap[currentUser.id] || team;
-            const lines = offerState.pairs.map(p => {
-                const a = oppTeam[p.opponentSlot];
-                const b = myTeam[p.mySlot];
-                const left = a ? `${a.name} (${p.opponentSlot})` : '—';
-                const right = b ? `${b.name} (${p.mySlot||'?'})` : '—';
-                return `• ${left} ⇄ ${right}`;
-            });
-            lines.push(`• Dinero que ofreces: ${formatM(offerState.cashMine||0)}`);
-            lines.push(`• Dinero que pides: ${formatM(offerState.cashTheirs||0)}`);
-            sum.innerHTML = `<div class="bg-gray-800/50 rounded-xl p-3 border border-gray-700">${lines.map(l => `<div>${l}</div>`).join('')}</div>`;
-        }
-
-        function closeOfferModal() {
+        function openOfferModalSimple() {
+            if (!transferMarketOpen) { const m=document.getElementById('auction-msg'); if(m) m.textContent='Mercado cerrado'; return; }
+            if (!viewingUserId || (currentUser && viewingUserId === currentUser.id)) { return; }
+            try { ensureTeamMap(viewingUserId); ensureTeamMap(currentUser.id); } catch(_) {}
+            offerState = { targetUserId: viewingUserId, pairs: [], cashMine: 0, cashTheirs: 0 };
             const modal = document.getElementById('offer-modal');
+            if (!modal) return;
+            const mineCash = document.getElementById('offer-cash-mine');
+            if (mineCash) mineCash.setAttribute('max', String(Math.max(0, userBudget)));
+            renderOpponentList();
+            renderOfferCart();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            // botones
+            const close = document.getElementById('offer-close');
+            const cancel = document.getElementById('offer-cancel');
+            const send = document.getElementById('offer-send');
+            if (close) close.onclick = closeOfferModalSimple;
+            if (cancel) cancel.onclick = closeOfferModalSimple;
+            if (send) send.onclick = sendOfferSimple;
+            // Entradas de efectivo
+            const cashMineEl = document.getElementById('offer-cash-mine');
+            const cashTheirsEl = document.getElementById('offer-cash-theirs');
+            if (cashMineEl) cashMineEl.oninput = () => { let v = Math.max(0, Number(cashMineEl.value)||0); if (v > userBudget) v = userBudget; if (v % 5 !== 0) v = Math.round(v/5)*5; offerState.cashMine = v; cashMineEl.value = String(v); };
+            if (cashTheirsEl) cashTheirsEl.oninput = () => { let v = Math.max(0, Number(cashTheirsEl.value)||0); if (v % 5 !== 0) v = Math.round(v/5)*5; offerState.cashTheirs = v; cashTheirsEl.value = String(v); };
+            validateOfferState();
+        }
+        try { window.openOfferModalSimple = openOfferModalSimple; } catch(_) {}
+
+        function closeOfferModalSimple() {
+            const modal = document.getElementById('offer-modal');
+            if (!modal) return;
             modal.classList.add('hidden');
             modal.classList.remove('flex');
+            try { playModalClose(); } catch(_) {}
         }
 
-        function sendOffer() {
-            if (!socket || !roomCode) { closeOfferModal(); return; }
-            // Validar pares
-            const validPairs = offerState.pairs.filter(p => p.opponentSlot && p.mySlot);
+        function sendOfferSimple() {
+            if (!socket || !roomCode) { closeOfferModalSimple(); return; }
+            const cashMineEl = document.getElementById('offer-cash-mine');
+            const cashTheirsEl = document.getElementById('offer-cash-theirs');
+            const validPairs = (offerState.pairs||[]).filter(p => p && p.opponentSlot && p.mySlot);
             if (validPairs.length === 0) { alert('Agrega al menos un intercambio válido.'); return; }
-            // Validar efectivo contra tu presupuesto
-            const cashMine = Math.max(0, Number(offerState.cashMine)||0);
+            let cashMine = Math.max(0, Number(cashMineEl && cashMineEl.value || 0));
             if (cashMine > userBudget) { alert('No puedes ofrecer más dinero del que tienes.'); return; }
             const payload = {
                 code: roomCode,
                 from: currentUser.id,
                 to: offerState.targetUserId,
-                pairs: validPairs, // [{opponentSlot, mySlot, group}]
-                cashMine,
-                cashTheirs: Math.max(0, Number(offerState.cashTheirs)||0),
+                pairs: validPairs,
+                cashMine: cashMine,
+                cashTheirs: Math.max(0, Number(cashTheirsEl && cashTheirsEl.value || 0)),
                 timestamp: Date.now()
             };
+            try { playClick(); } catch(_) {}
             socket.emit('transfer_offer', payload);
-            closeOfferModal();
+            closeOfferModalSimple();
         }
 
-        // ===== Recepción de ofertas =====
-        function showOfferReceivedModal(offer) {
+        // ===== Modal de oferta recibida (simple) =====
+        function showOfferReceivedModalSimple(offer, readOnly=false) {
             const modal = document.getElementById('offer-received-modal');
             const content = document.getElementById('offer-received-content');
+            if (!modal || !content) return;
+            const fromUser = (participants||[]).find(p => p.id === offer.from);
             const oppTeam = teamsMap[offer.from] || {};
             const myTeam = teamsMap[offer.to] || team;
-            const userFrom = participants.find(p => p.id === offer.from);
-            const userTo = participants.find(p => p.id === offer.to);
-            const lines = [];
-            lines.push(`<div class='mb-2'><span class='text-gray-400'>De:</span> <span class='font-bold'>${userFrom?.name||offer.from}</span> <span class='text-gray-400'>Para:</span> <span class='font-bold'>${userTo?.name||offer.to}</span></div>`);
-            offer.pairs.forEach(p => {
-                const a = myTeam[p.opponentSlot] || {}; // para el receptor, opponentSlot es suyo
-                const b = oppTeam[p.mySlot] || {}; // del oferente
-                lines.push(`<div>• ${a.name||'?'} (${p.opponentSlot}) ⇄ ${b.name||'?'} (${p.mySlot})</div>`);
-            });
-            lines.push(`<div class='mt-2'>• Dinero que te ofrecen: ${formatM(offer.cashMine||0)}</div>`);
-            lines.push(`<div>• Dinero que te piden: ${formatM(offer.cashTheirs||0)}</div>`);
-            content.innerHTML = lines.join('');
+            const toUser = (participants||[]).find(p => p.id === offer.to);
+            const items = (offer.pairs||[]).map(p => {
+                const a = myTeam[p.opponentSlot] || {};
+                const b = oppTeam[p.mySlot] || {};
+                return `
+                <div class='flex items-center gap-3 p-2 rounded-lg bg-gray-900/40 border border-gray-800'>
+                    <div class='flex-1 min-w-0 flex items-center gap-2'>
+                        <div class='w-10 h-10 rounded overflow-hidden border border-gray-700 bg-black/30'>
+                            <img src='${a.photo||''}' alt='${a.name||''}' class='w-full h-full object-contain'/>
+                        </div>
+                        <div class='text-xs text-white font-semibold min-w-0 truncate'>${a.name||'?'} <span class='text-gray-400'>(${p.opponentSlot})</span></div>
+                    </div>
+                    <div class='text-gray-400'>⇄</div>
+                    <div class='flex-1 min-w-0 flex items-center gap-2 justify-end'>
+                        <div class='w-10 h-10 rounded overflow-hidden border border-gray-700 bg-black/30'>
+                            <img src='${b.photo||''}' alt='${b.name||''}' class='w-full h-full object-contain'/>
+                        </div>
+                        <div class='text-xs text-white font-semibold min-w-0 truncate text-right'>${b.name||'?'} <span class='text-gray-400'>(${p.mySlot})</span></div>
+                    </div>
+                </div>`;
+            }).join('');
+            content.innerHTML = `
+                <div class='mb-2 flex items-center justify-between'>
+                    <div class='text-sm'><span class='text-gray-400'>De:</span> <span class='font-bold'>${fromUser?.name||offer.from}</span></div>
+                </div>
+                <div class='mb-2 grid grid-cols-2 gap-2 text-[11px] text-gray-300'>
+                    <div class='text-left'><span class='font-bold'>${toUser?.name || 'Tú'}</span> recibe</div>
+                    <div class='text-right'><span class='font-bold'>${fromUser?.name || 'Rival'}</span> recibe</div>
+                </div>
+                <div class='space-y-2'>${items || '<div class="text-gray-400 text-sm">Sin jugadores.</div>'}</div>
+                <div class='mt-3 text-sm'>• Dinero que te ofrecen: ${formatM(offer.cashMine||0)}</div>
+                <div class='text-sm'>• Dinero que te piden: ${formatM(offer.cashTheirs||0)}</div>
+                ${readOnly ? '<div class="mt-2 text-xs text-amber-300">Vista para todos: solo el destinatario puede aceptar o rechazar.</div>' : ''}
+            `;
             modal.classList.remove('hidden');
             modal.classList.add('flex');
-            // Botones
-            document.getElementById('offer-received-close').onclick = () => closeOfferReceivedModal();
-            document.getElementById('offer-reject').onclick = () => respondOffer(offer, 'reject');
-            document.getElementById('offer-accept').onclick = () => respondOffer(offer, 'accept');
-            document.getElementById('offer-counter').onclick = () => counterOffer(offer);
+            const x = document.getElementById('offer-received-close');
+            const rej = document.getElementById('offer-reject');
+            const acc = document.getElementById('offer-accept');
+            if (x) x.onclick = () => { try { playModalClose(); } catch(_) {}; closeOfferReceivedModalSimple(); };
+            if (rej) {
+                rej.onclick = () => { if (!readOnly) { try { playReject(); } catch(_) {}; respondOfferSimple(offer, 'reject'); } };
+                rej.disabled = !!readOnly;
+                rej.classList.toggle('opacity-50', !!readOnly);
+                rej.classList.toggle('cursor-not-allowed', !!readOnly);
+            }
+            if (acc) {
+                acc.onclick = () => { if (!readOnly) { try { playAccept(); } catch(_) {}; respondOfferSimple(offer, 'accept'); } };
+                acc.disabled = !!readOnly;
+                acc.classList.toggle('opacity-50', !!readOnly);
+                acc.classList.toggle('cursor-not-allowed', !!readOnly);
+            }
+            try { playModalOpen(); } catch(_) {}
         }
-        function closeOfferReceivedModal() {
+        try { window.showOfferReceivedModal = showOfferReceivedModalSimple; } catch(_) {}
+
+        function closeOfferReceivedModalSimple() {
             const modal = document.getElementById('offer-received-modal');
+            if (!modal) return;
             modal.classList.add('hidden');
             modal.classList.remove('flex');
         }
-        function respondOffer(offer, action) {
-            if (!socket) { closeOfferReceivedModal(); return; }
+        function respondOfferSimple(offer, action) {
+            if (!socket) { closeOfferReceivedModalSimple(); return; }
             socket.emit('transfer_offer_update', { code: roomCode, action, offer });
-            closeOfferReceivedModal();
+            closeOfferReceivedModalSimple();
         }
-        function counterOffer(offer) {
-            // Abrir modal de crear oferta precargado hacia el emisor original
-            viewingUserId = offer.from;
-            openOfferModal();
-        }
-        // Manejo de actualizaciones de oferta (aceptada/rechazada/contraoferta)
-        function updateOfferModal(update) {
+    </script>
+    <!-- Modal de Ruleta -->
+    <div id="roulette-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
+        <div class="absolute inset-0 bg-black/60"></div>
+        <div class="relative bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md mx-4 text-white">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-bold">Ruleta</h3>
+                <button id="roulette-close" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Cerrar</button>
+            </div>
+            <div id="roulette-content" class="text-center">
+                <div class="relative mx-auto mb-4 w-[360px] h-[360px]">
+                    <!-- Pointer -->
+                    <div class="absolute top-0 left-1/2 -translate-x-1/2 z-10">
+                        <div style="width:0;height:0;border-left:12px solid transparent;border-right:12px solid transparent;border-bottom:18px solid #fbbf24;"></div>
+                    </div>
+                    <!-- Wheel canvas -->
+                    <div id="roulette-wheel-wrap" class="absolute inset-0 flex items-center justify-center roulette-idle" style="transition: transform 5s cubic-bezier(0.12, 0.85, 0.13, 1);">
+                        <canvas id="roulette-canvas" width="360" height="360" class="rounded-full border-4 border-indigo-400 bg-gray-950"></canvas>
+                    </div>
+                </div>
+                <div id="roulette-legend" class="text-xs text-gray-300 mb-2">Jugadores elegibles: <span id="roulette-legend-count">0</span></div>
+                <div class="mt-2">
+                    <button id="roulette-start" type="button" class="hidden inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg transition-all shadow border border-emerald-400/40">
+                        Iniciar giro
+                    </button>
+                </div>
+                <div id="roulette-result" class="mt-2 hidden">
+                    <div class="flex items-center justify-center gap-3">
+                        <img id="roulette-winner-avatar" src="" alt="avatar" class="w-10 h-10 rounded-full object-cover bg-black/30 border border-gray-700"/>
+                        <div class="text-left">
+                            <div class="text-white font-bold" id="roulette-winner-name"></div>
+                            <div class="text-sm text-emerald-300" id="roulette-winner-sub"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        // ===== Ruleta: helpers de dibujo/animación =====
+        let rouletteItems = [];
+        let rouletteSpun = false;
+        let rouletteSpinEndsAt = 0;
+        let rouletteModalOpen = false;
+        let rouletteWinnerId = null;
+        let rouletteAllowHighlight = false; // no resaltar hasta que termine el giro
+        const rouletteAvatarCache = new Map(); // id -> HTMLImageElement
+        let tickTimer = null;
+        let audioCtx = null;
+        const pendingRouletteTasks = [];
+        // Flag para evitar doble click en "Iniciar giro" y permitir reutilización posterior
+        let rouletteStartBusy = false; // evita doble click sin deshabilitar el botón
+        function clearPendingRouletteTasks() {
             try {
-                const msg = document.getElementById('auction-msg');
-                const action = update && update.action;
-                const offer = update && update.offer;
-                // Cerrar cualquier modal abierto relacionado
-                closeOfferReceivedModal();
-                closeOfferModal();
-                if (action === 'accept') {
-                    msg && (msg.textContent = 'Tu oferta fue aceptada.');
-                } else if (action === 'reject') {
-                    msg && (msg.textContent = 'Tu oferta fue rechazada.');
-                } else if (action === 'counter') {
-                    // En caso de contraoferta, reabrir creador apuntando al emisor
-                    if (offer && offer.from) {
-                        viewingUserId = offer.from;
-                        openOfferModal();
-                    }
-                    msg && (msg.textContent = 'Has recibido una contraoferta.');
-                } else {
-                    msg && (msg.textContent = 'Actualización de oferta recibida.');
+                while (pendingRouletteTasks.length) {
+                    const t = pendingRouletteTasks.pop();
+                    try { clearTimeout(t); } catch(_) {}
                 }
-                if (msg) setTimeout(() => { msg.textContent = ''; }, 3000);
-            } catch (e) {
-                console.warn('updateOfferModal error', e);
+            } catch(_) {}
+        }
+        function runAfterSpin(fn, extraDelay=200) {
+            try {
+                if (rouletteModalOpen && Date.now() < rouletteSpinEndsAt) {
+                    const delay = Math.max(0, rouletteSpinEndsAt - Date.now() + extraDelay);
+                    const t = setTimeout(() => { try { fn && fn(); } catch(_) {} }, delay);
+                    pendingRouletteTasks.push(t);
+                } else {
+                    fn && fn();
+                }
+            } catch(_) { fn && fn(); }
+        }
+        function getCurrentPositionKey() {
+            if (serverPositionName) return serverPositionName;
+            const pos = positions[currentPositionIndex];
+            return pos ? pos.name : '';
+        }
+        function getCurrentMinPrice() {
+            const p = playersForCurrentPosition && playersForCurrentPosition[currentPlayerIndex];
+            return p && typeof p.price === 'number' ? p.price : 0;
+        }
+        function getEligibleParticipants() {
+            const posKey = getCurrentPositionKey();
+            const min = getCurrentMinPrice();
+            // Si no hay lista de participantes aún, intentar construir desde budgets/teams (fallback para el host en la primera vez)
+            let source = Array.isArray(participants) && participants.length > 0
+                ? participants
+                : Object.keys(budgetsMap || {}).map(id => ({ id, name: id.slice(0,6), avatar: '' }));
+            return (source || []).filter(p => {
+                const budKnown = budgetsMap && typeof budgetsMap[p.id] === 'number';
+                const bud = budKnown ? budgetsMap[p.id] : 1100; // asumir elegible si no conocemos presupuesto aún
+                const teamObj = teamsMap[p.id] || {};
+                const hasThisPos = !!teamObj[posKey];
+                return !hasThisPos && bud >= min;
+            });
+        }
+        function ensureAudioCtx() {
+            if (!audioCtx) {
+                try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(_) {}
             }
+            return audioCtx;
+        }
+        function playTick() {
+            const ctx = ensureAudioCtx();
+            if (!ctx) return;
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.type = 'square';
+            o.frequency.setValueAtTime(1000, ctx.currentTime);
+            g.gain.setValueAtTime(0.04, ctx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.06);
+            o.connect(g).connect(ctx.destination);
+            o.start();
+            o.stop(ctx.currentTime + 0.06);
+        }
+        function playWin() {
+            const ctx = ensureAudioCtx();
+            if (!ctx) return;
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.type = 'sine';
+            o.frequency.setValueAtTime(660, ctx.currentTime);
+            g.gain.setValueAtTime(0.06, ctx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.8);
+            o.connect(g).connect(ctx.destination);
+            o.start();
+            o.stop(ctx.currentTime + 0.8);
+        }
+        function startTicking(totalMs=5000) {
+            stopTicking();
+            // simple decelerating ticks: start fast and slow down
+            const start = Date.now();
+            let interval = 110; // ms
+            const step = () => {
+                playTick();
+                const elapsed = Date.now() - start;
+                const t = Math.min(1, elapsed / totalMs);
+                // ease-out increase interval
+                const base = 110 + t * 220; // from ~110ms to ~330ms
+                interval = base;
+                tickTimer = setTimeout(step, interval);
+            };
+            tickTimer = setTimeout(step, interval);
+        }
+        function stopTicking() {
+            if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
+        }
+        function preloadAvatars(items) {
+            (items||[]).forEach(it => {
+                if (!it || !it.id || !it.avatar) return;
+                if (rouletteAvatarCache.has(it.id)) return;
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.src = it.avatar;
+                img.onload = () => { if (rouletteModalOpen) drawRouletteWheel(rouletteItems.length ? rouletteItems : [{name:'Sin elegibles'}]); };
+                rouletteAvatarCache.set(it.id, img);
+            });
+        }
+        function drawRouletteWheel(items) {
+            const canvas = document.getElementById('roulette-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            ctx.clearRect(0,0,size,size);
+            const cx = size/2, cy = size/2, r = size/2 - 8; // + padding para evitar cortes
+            const n = Math.max(1, items.length);
+            const anglePer = (Math.PI * 2) / n;
+            const colors = ['#06281d','#064e3b','#065f46','#047857','#065f46','#064e3b'];
+            for (let i=0;i<n;i++) {
+                const a0 = -Math.PI/2 + i*anglePer; // empieza arriba
+                const a1 = a0 + anglePer;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, r, a0, a1);
+                ctx.closePath();
+                ctx.fillStyle = colors[i % colors.length];
+                ctx.fill();
+                // borde
+                ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // texto
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate((a0 + a1) / 2);
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#e5e7eb';
+                ctx.font = 'bold 12px Inter, sans-serif';
+                const name = (items[i]?.name || '?').slice(0,16);
+                // offset proporcional para centrar mejor
+                const textOffset = Math.max(28, Math.min(56, r * (n > 12 ? 0.22 : 0.18)));
+                ctx.fillText(name, 0, -r + textOffset);
+                // avatar (debajo del texto, más hacia el borde)
+                const id = items[i]?.id;
+                const img = id ? rouletteAvatarCache.get(id) : null;
+                if (img && img.complete) {
+                    const avR = n > 12 ? 14 : 18; // radio del avatar (un poco más grande)
+                    ctx.save();
+                    ctx.beginPath();
+                    const avatarOffset = Math.max(60, Math.min(98, r * (n > 12 ? 0.42 : 0.40))); // más hacia el borde
+                    ctx.arc(0, -r + avatarOffset, avR, 0, Math.PI*2);
+                    ctx.closePath();
+                    ctx.clip();
+                    ctx.drawImage(img, -avR, -r + avatarOffset - avR, avR*2, avR*2);
+                    ctx.restore();
+                    // borde del avatar
+                    ctx.beginPath();
+                    ctx.arc(0, -r + avatarOffset, avR, 0, Math.PI*2);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+            // Si hay ganador al final, dibujar un highlight sutil sobre el segmento
+            if (rouletteAllowHighlight && rouletteWinnerId && items.length > 0) {
+                const idx = Math.max(0, items.findIndex(it => it.id === rouletteWinnerId));
+                if (idx >= 0) {
+                    const start = -Math.PI/2 + idx*anglePer;
+                    const end = start + anglePer;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, start, end);
+                    ctx.strokeStyle = 'rgba(16,185,129,0.9)';
+                    ctx.lineWidth = 6;
+                    ctx.shadowColor = 'rgba(16,185,129,0.6)';
+                    ctx.shadowBlur = 12;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+
+        function highlightWinnerSegment() {
+            try {
+                if (!rouletteAllowHighlight || !rouletteWinnerId) return;
+                drawRouletteWheel(rouletteItems.length ? rouletteItems : []);
+            } catch(_) {}
+        }
+        function spinRouletteToWinner(winnerId) {
+            try {
+                const wrap = document.getElementById('roulette-wheel-wrap');
+                if (!wrap) return;
+                const n = Math.max(1, rouletteItems.length);
+                const idx = Math.max(0, rouletteItems.findIndex(it => it.id === winnerId));
+                const anglePer = 360 / n;
+                // Queremos que el centro del segmento quede en el puntero (arriba)
+                const target = (idx * anglePer) + anglePer / 2; // grados desde 0º (arriba)
+                // Como dibujamos con 0 en arriba, la rotación requerida es 360k + (360 - target)
+                const rotations = 6 * 360; // vueltas completas (más largo)
+                const finalDeg = rotations + (360 - target);
+                // Parar animación idle y resetear transform SIEMPRE para evitar desincronización visual en host
+                wrap.classList.remove('roulette-idle');
+                wrap.style.animation = 'none';
+                wrap.style.transition = 'none';
+                wrap.style.transform = 'rotate(0deg)';
+                // forzar reflow
+                wrap.getBoundingClientRect();
+                // restaurar transición
+                wrap.style.transition = 'transform 5s cubic-bezier(0.12, 0.85, 0.13, 1)';
+                wrap.style.animation = '';
+                rouletteSpun = true;
+                rouletteSpinEndsAt = Date.now() + 5000;
+                rouletteWinnerId = winnerId;
+                rouletteAllowHighlight = false; // bloquear highlight durante el giro
+                startTicking(5000);
+                setTimeout(() => { wrap.style.transform = `rotate(${finalDeg}deg)`; }, 30);
+                setTimeout(() => { stopTicking(); playWin(); rouletteAllowHighlight = true; highlightWinnerSegment(); }, 5050);
+            } catch(e) { console.warn('spinRouletteToWinner error', e); }
+        }
+
+        function openRouletteModal(opts) {
+            try {
+                const modal = document.getElementById('roulette-modal');
+                const result = document.getElementById('roulette-result');
+                const nameEl = document.getElementById('roulette-winner-name');
+                const subEl = document.getElementById('roulette-winner-sub');
+                const avEl = document.getElementById('roulette-winner-avatar');
+                const startBtn = document.getElementById('roulette-start');
+                if (!modal) return;
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                // Habilitar nuevamente el botón de inicio para giros subsecuentes
+                rouletteStartBusy = false;
+                rouletteModalOpen = true;
+                // Reset de estado y timers para evitar cierres/acciones tardías
+                clearPendingRouletteTasks();
+                stopTicking();
+                rouletteSpun = false;
+                rouletteSpinEndsAt = 0;
+                rouletteWinnerId = null;
+                rouletteAllowHighlight = false;
+                if (result) result.classList.add('hidden');
+                // Estado inicial del botón de inicio dentro del modal según permisos/eligibles/lock
+                if (startBtn) {
+                    const canStart = isHost && (rouletteEligibleCount > 0) && !rouletteLocked;
+                    startBtn.classList.toggle('hidden', !canStart);
+                    startBtn.disabled = !canStart;
+                    startBtn.classList.toggle('opacity-50', startBtn.disabled);
+                    startBtn.classList.toggle('cursor-default', startBtn.disabled);
+                }
+                // volver a activar idle spin suave al abrir
+                const wrap = document.getElementById('roulette-wheel-wrap');
+                if (wrap) {
+                    rouletteWinnerId = null; // reset highlight
+                    rouletteAllowHighlight = false;
+                    wrap.classList.remove('roulette-idle'); // reset to reflow
+                    // force reflow
+                    void wrap.offsetWidth;
+                    wrap.classList.add('roulette-idle');
+                    wrap.style.transform = 'rotate(0deg)';
+                }
+                // Construir items elegibles y dibujar la ruleta
+                const eligibles = getEligibleParticipants();
+                rouletteItems = eligibles.map(p => ({ id: p.id, name: p.name || p.id, avatar: p.avatar || '' }));
+                preloadAvatars(rouletteItems);
+                const countEl = document.getElementById('roulette-legend-count');
+                if (countEl) countEl.textContent = String(rouletteItems.length);
+                drawRouletteWheel(rouletteItems.length ? rouletteItems : [{name:'Sin elegibles'}]);
+                // Mostrar u ocultar botón de iniciar giro (solo host)
+                if (startBtn) {
+                    const show = isHost && (rouletteItems.length > 0) && !rouletteLocked;
+                    startBtn.classList.toggle('hidden', !show);
+                    startBtn.disabled = !show;
+                    startBtn.classList.toggle('opacity-50', startBtn.disabled);
+                    startBtn.onclick = () => {
+                        if (!isHost || !socket || !roomCode || rouletteItems.length === 0 || rouletteLocked) return;
+                        if (rouletteStartBusy) return;
+                        rouletteStartBusy = true;
+                        // Feedback visual sin deshabilitar (evita cursor de bloqueo)
+                        startBtn.classList.add('opacity-50');
+                        // Emitir giro real al servidor
+                        socket.emit('spin_roulette', { code: roomCode });
+                    };
+                }
+                // Si ya llegó ganador en opts, girar directo
+                if (opts && opts.winner && opts.winner.id) {
+                    spinRouletteToWinner(opts.winner.id);
+                    // Mostrar resultado tras finalizar el giro (~5.2s)
+                    setTimeout(() => {
+                        if (result) result.classList.remove('hidden');
+                        if (nameEl) nameEl.textContent = opts.winner.name || 'Ganador';
+                        if (subEl) subEl.textContent = opts.positionName ? `Compra en ${opts.positionName} por ${formatM(opts.price||0)}` : '';
+                        if (avEl) avEl.src = opts.winner.avatar || '';
+                    }, 5200);
+                }
+                const closeBtn = document.getElementById('roulette-close');
+                if (closeBtn) closeBtn.onclick = () => {
+                    try {
+                        // Host emite cierre sincronizado
+                        if (isHost && socket && roomCode) {
+                            socket.emit('roulette_close', { code: roomCode });
+                        }
+                    } catch(_) {}
+                    closeRouletteModal();
+                };
+            } catch (e) { console.warn('openRouletteModal error', e); }
+        }
+        function closeRouletteModal() {
+            try {
+                const modal = document.getElementById('roulette-modal');
+                if (!modal) return;
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                rouletteModalOpen = false;
+                // limpiar tareas pendientes y sonido para evitar delays en siguientes giros
+                clearPendingRouletteTasks();
+                stopTicking();
+                rouletteSpun = false;
+                rouletteSpinEndsAt = 0;
+                // Al cerrar, permitir que el siguiente uso del botón funcione
+                rouletteStartBusy = false;
+                // No sincronizar cierre: solo se cierra manualmente con la X local
+            } catch (e) { console.warn('closeRouletteModal error', e); }
         }
     </script>
     <style>
+        /* Idle gentle spin for roulette wheel (before actual spin) */
+        .roulette-idle { animation: rouletteIdle 12s linear infinite; }
+        @keyframes rouletteIdle { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         body {
             font-family: 'Inter', sans-serif;
             /* Primary background (fondo.jpg) with fallback to Fotos/1.png + gradient overlay */
@@ -2424,7 +3380,7 @@
             box-shadow: 0 8px 22px -16px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.04);
         }
         .team-slot__photo img { width: 100%; height: 100%; object-fit: contain; }
-        .team-slot__name { margin-top: 6px; font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .team-slot__name { margin-top: 6px; font-size: 12px; font-weight: 600; color: #fff; white-space: normal; overflow: visible; text-overflow: unset; line-height: 1.2; }
         .team-slot__price { font-size: 11px; color: #6ee7b7; font-weight: 800; }
         .team-slot__badge {
             position: absolute;
@@ -2443,6 +3399,9 @@
         .team-slot--empty .team-slot__label { margin-top: 6px; font-size: 11px; color: #9ca3af; font-weight: 700; letter-spacing: 0.02em; }
 
         /* Minimal background for the team section */
+        .animate-spin-slow { animation: spin 2s linear infinite; }
+        .animate-spin-slower { animation: spin 4s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         #team-slots {
             padding: 12px 14px;
             border-radius: 16px;
@@ -2572,6 +3531,14 @@
             <div class="mb-3 flex items-center gap-2">
                 <button id="transfer-market-pill" type="button" class="inline-block text-xs font-bold px-3 py-1 rounded-full border cursor-pointer select-none transition-colors">Mercado: Cerrado</button>
             </div>
+            <!-- Ruleta (solo host) -->
+            <div id="roulette-box" class="mb-3 p-3 rounded-xl bg-gray-900/50 border border-gray-800 hidden">
+                <div class="flex items-center justify-between">
+                    <h4 class="text-white font-semibold">Ruleta</h4>
+                    <button id="spin-roulette" class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold">Tirar ruleta</button>
+                </div>
+                <div id="roulette-status" class="mt-2 text-xs text-gray-300">Elegibles: <span id="roulette-count">0</span></div>
+            </div>
             <h3 class="text-lg font-bold text-white mb-4 text-center">Subasta</h3>
             <div class="space-y-4 text-sm">
                 <div class="text-center">
@@ -2590,13 +3557,18 @@
                     <button id="buy-button" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-lg transition-all">Pujar</button>
                 </div>
                 <!-- Puja actual abajo con info del pujador -->
-                <div id="current-bid-info" class="hidden mt-2 flex items-center gap-3 p-2 rounded-lg bg-gray-900/40 border border-gray-800">
+                <div id="current-bid-info" class="mt-2 h-14 flex items-center gap-3 p-2 rounded-lg bg-gray-900/40 border border-gray-800">
                     <img id="current-bidder-avatar" src="" alt="avatar" class="w-8 h-8 rounded-full object-cover bg-black/30 border border-gray-700"/>
                     <div class="flex-1 min-w-0">
                         <div id="current-bidder-name" class="text-sm text-white truncate">—</div>
                         <div class="text-xs text-gray-400">Puja actual</div>
                     </div>
                     <div id="current-bid-bottom" class="font-extrabold text-white">$0M</div>
+                </div>
+                <!-- Temporizador de puja -->
+                <div id="auction-timer" class="mt-2 text-center h-16 flex flex-col items-center justify-center">
+                    <div class="text-xs text-gray-400">Tiempo restante</div>
+                    <div id="auction-timer-value" class="font-extrabold text-gray-500 text-3xl">—</div>
                 </div>
                 <p id="auction-msg" class="text-xs text-gray-300 min-h-[1.25rem] text-center"></p>
             </div>
